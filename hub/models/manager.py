@@ -90,6 +90,12 @@ def _mock_payload(prompt: str, fmt: Any, messages: list[dict] | None = None) -> 
     return "[mock] Local AI Hub offline response."
 
 
+def _mock_tokens(text: str):
+    """Split a mock response into word-ish fragments (offline streaming)."""
+    pieces = re.findall(r"\S+\s*", text)
+    return pieces or ([text] if text else [])
+
+
 class ModelManager:
     def __init__(self, config, on_event=None):
         self.config = config
@@ -209,6 +215,18 @@ class ModelManager:
         )
 
     # ------------------------------------------------------------------
+    def _streaming(self, requested: bool | None, on_token) -> bool:
+        """Effective streaming decision for one call.
+
+        A caller that supplies ``on_token`` wants streaming; otherwise the
+        per-call flag wins, then ``ollama.stream`` from the config.
+        """
+        if on_token is not None:
+            return True
+        if requested is not None:
+            return bool(requested)
+        return bool(self.config.get("ollama.stream", False))
+
     def _options(self, overrides: dict | None) -> dict:
         options = {
             "temperature": float(self.config.get("ollama.temperature", 0.1)),
@@ -226,14 +244,28 @@ class ModelManager:
         images: list[str] | None = None,
         fmt: Any = None,
         options: dict | None = None,
+        stream: bool | None = None,
+        on_token=None,
     ) -> dict:
         resolved = self.resolve_model(model or (self.vision_model if images else self.default_model))
         keep_alive = self.config.get("ollama.keep_alive", "5m")
+        streaming = self._streaming(stream, on_token)
         started = time.monotonic()
-        self._emit("model.generating", {"model": resolved, "images": len(images or [])})
+        self._emit("model.generating", {"model": resolved, "images": len(images or []), "stream": streaming})
+
+        tokens = 0
+        sink = None
+        if streaming and on_token is not None:
+            def sink(fragment: str) -> None:
+                nonlocal tokens
+                tokens += 1
+                on_token(fragment)
 
         if self.mock:
             text = _mock_payload(prompt, fmt)
+            if sink is not None:
+                for fragment in _mock_tokens(text):
+                    sink(fragment)
         else:
             self.ensure_server()
             try:
@@ -245,6 +277,8 @@ class ModelManager:
                     fmt=fmt,
                     options=self._options(options),
                     keep_alive=keep_alive,
+                    stream=streaming,
+                    on_token=sink,
                 )
             except OllamaError as exc:
                 raise ModelError(str(exc), exc.code) from exc
@@ -255,6 +289,8 @@ class ModelManager:
             "text": text,
             "model": resolved,
             "mock": self.mock,
+            "streamed": bool(streaming),
+            "tokens": tokens,
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
 
@@ -265,14 +301,28 @@ class ModelManager:
         model: str | None = None,
         fmt: Any = None,
         options: dict | None = None,
+        stream: bool | None = None,
+        on_token=None,
     ) -> dict:
         has_images = any(message.get("images") for message in messages)
         resolved = self.resolve_model(model or (self.vision_model if has_images else self.default_model))
+        streaming = self._streaming(stream, on_token)
         started = time.monotonic()
-        self._emit("model.generating", {"model": resolved, "chat": True})
+        self._emit("model.generating", {"model": resolved, "chat": True, "stream": streaming})
+
+        tokens = 0
+        sink = None
+        if streaming and on_token is not None:
+            def sink(fragment: str) -> None:
+                nonlocal tokens
+                tokens += 1
+                on_token(fragment)
 
         if self.mock:
             text = _mock_payload("", fmt, messages)
+            if sink is not None:
+                for fragment in _mock_tokens(text):
+                    sink(fragment)
         else:
             self.ensure_server()
             try:
@@ -282,6 +332,8 @@ class ModelManager:
                     fmt=fmt,
                     options=self._options(options),
                     keep_alive=self.config.get("ollama.keep_alive", "5m"),
+                    stream=streaming,
+                    on_token=sink,
                 )
             except OllamaError as exc:
                 raise ModelError(str(exc), exc.code) from exc
@@ -292,6 +344,8 @@ class ModelManager:
             "text": text,
             "model": resolved,
             "mock": self.mock,
+            "streamed": bool(streaming),
+            "tokens": tokens,
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
 
@@ -353,6 +407,7 @@ class ModelManager:
             "loaded_models": sorted(set(self._loaded) | set(running)),
             "installed_models": self.installed_models() if alive else [],
             "idle_unload_seconds": self.config.get("ollama.idle_unload_seconds"),
+            "stream": bool(self.config.get("ollama.stream", False)),
             "last_used_ms_ago": int((time.monotonic() - self._last_used) * 1000) if self._last_used else None,
         }
 

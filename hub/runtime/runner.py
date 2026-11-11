@@ -4,6 +4,7 @@ The engine and a plugin exchange newline-delimited JSON on stdio:
 
     engine -> plugin : {"type":"invoke", ...}
     plugin -> engine : {"type":"llm.request","id":"1","method":"generate","params":{...}}
+    engine -> plugin : {"type":"llm.token","id":"1","text":"partial","index":0}   (streaming only)
     engine -> plugin : {"type":"llm.response","id":"1","ok":true,"result":{...}}
     plugin -> engine : {"type":"log"|"progress", ...}
     plugin -> engine : {"type":"result","ok":true,"output":{...}}
@@ -29,6 +30,9 @@ from ..logging_util import get_logger
 from ..plugins.manager import Plugin
 
 log = get_logger("runner")
+
+#: Safety valve: a runaway model must not flood the plugin's stdin.
+MAX_TOKEN_FRAMES = 20000
 
 
 class PluginRuntimeError(RuntimeError):
@@ -248,7 +252,33 @@ def run_plugin(
                             )
                             continue
                         try:
-                            llm_result = llm_handler(message.get("method", "generate"), message.get("params") or {})
+                            params = message.get("params") or {}
+                            wants_stream = bool(params.get("stream")) or bool(
+                                config.get("ollama.stream", False)
+                            )
+                            call_id = message.get("id")
+                            on_token = None
+                            if wants_stream:
+                                params = {**params, "stream": True}
+                                forwarded = [0]
+
+                                def on_token(fragment: str, _id=call_id, _count=forwarded) -> None:
+                                    # Partial output: a separate frame type so the
+                                    # SDK can hand tokens to the plugin while the
+                                    # final llm.response is still pending.
+                                    _count[0] += 1
+                                    if _count[0] > MAX_TOKEN_FRAMES:
+                                        return
+                                    send(
+                                        {
+                                            "type": "llm.token",
+                                            "id": _id,
+                                            "text": fragment,
+                                            "index": _count[0] - 1,
+                                        }
+                                    )
+
+                            llm_result = llm_handler(message.get("method", "generate"), params)
                             send(
                                 {
                                     "type": "llm.response",

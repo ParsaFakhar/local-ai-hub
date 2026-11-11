@@ -52,6 +52,9 @@ DEFAULTS: dict[str, Any] = {
         "model_fallbacks": ["qwen3:4b", "qwen2.5:4b", "llama3.2:3b"],
         "num_ctx": 8192,
         "temperature": 0.1,
+        # Streaming is opt-in: a plugin may also request it per call
+        # (params.stream / SDK on_token), which overrides this default.
+        "stream": False,
         "mock": False,
     },
     "domains": {
@@ -66,6 +69,9 @@ DEFAULTS: dict[str, Any] = {
         "allowed_origins": [],
         "allow_token_query": True,
         "sse_keepalive_seconds": 15,
+        # Opt-in alternative transport for local programs: an AF_UNIX socket
+        # with 0600 permissions instead of a TCP port.
+        "unix_socket": "",
     },
     "tasks": {
         "history_size": 100,

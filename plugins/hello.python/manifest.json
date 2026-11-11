@@ -1,1 +1,71 @@
-{"id": "hello.python", "name": "Hello (Python)", "version": "1.0.0", "description": "Reference plugin: proves the Python runtime, config merging and optional model access work end to end.", "runtime": {"type": "python", "entry": "plugin.py", "min_version": "3.9"}, "capabilities": ["llm.generate"], "timeout_seconds": 60, "input": {"type": "object", "properties": {"name": {"type": "string", "default": "world", "maxLength": 200}, "use_llm": {"type": "boolean", "default": false}}}, "output": {"type": "object", "required": ["greeting", "runtime"], "properties": {"greeting": {"type": "string"}, "runtime": {"type": "string"}, "python_version": {"type": "string"}, "model_text": {"type": "string"}}}, "default_config": {"greeting_template": "Hello, {name}!", "use_llm": false}, "config_schema": {"type": "object", "properties": {"greeting_template": {"type": "string"}, "use_llm": {"type": "boolean"}, "model": {"type": "string"}}}, "models": {"text": "default"}}
+{
+  "id": "hello.python",
+  "name": "Hello (Python)",
+  "version": "0.2.0",
+  "description": "Reference plugin: proves the Python runtime, config merging and optional model access work end to end.",
+  "runtime": {
+    "type": "python",
+    "entry": "plugin.py",
+    "min_version": "3.9"
+  },
+  "capabilities": [
+    "llm.generate"
+  ],
+  "timeout_seconds": 60,
+  "input": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "default": "world",
+        "maxLength": 200
+      },
+      "use_llm": {
+        "type": "boolean",
+        "default": false
+      }
+    }
+  },
+  "output": {
+    "type": "object",
+    "required": [
+      "greeting",
+      "runtime"
+    ],
+    "properties": {
+      "greeting": {
+        "type": "string"
+      },
+      "runtime": {
+        "type": "string"
+      },
+      "python_version": {
+        "type": "string"
+      },
+      "model_text": {
+        "type": "string"
+      }
+    }
+  },
+  "default_config": {
+    "greeting_template": "Hello, {name}!",
+    "use_llm": false
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "greeting_template": {
+        "type": "string"
+      },
+      "use_llm": {
+        "type": "boolean"
+      },
+      "model": {
+        "type": "string"
+      }
+    }
+  },
+  "models": {
+    "text": "default"
+  }
+}

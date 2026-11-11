@@ -1,1 +1,144 @@
-{"id": "comments.classify", "name": "Comment classifier", "version": "0.2.0", "description": "Contextual classification of webpage comments into configurable labels, with reasons and confidence. Batches comments and enforces structured JSON output.", "runtime": {"type": "python", "entry": "plugin.py", "min_version": "3.9"}, "capabilities": ["llm.generate", "llm.structured"], "timeout_seconds": 300, "input": {"type": "object", "required": ["comments"], "properties": {"comments": {"type": "array", "maxItems": 500, "items": {"type": "object", "required": ["id", "text"], "properties": {"id": {"type": "string", "maxLength": 128}, "text": {"type": "string", "maxLength": 20000}, "author": {"type": "string"}, "context": {"type": "string", "maxLength": 4000}}}}, "labels": {"type": "array", "items": {"type": "string"}}, "instructions": {"type": "string", "maxLength": 4000}, "page_title": {"type": "string", "maxLength": 500}}}, "output": {"type": "object", "required": ["results"], "properties": {"results": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "confidence": {"type": "number"}, "reason": {"type": "string"}}}}, "summary": {"type": "object"}}}, "default_config": {"labels": ["ok", "spam", "toxic", "off-topic"], "instructions": "Classify each comment in the context of the page it appears on. Be conservative: only use a label other than 'ok' when there is clear evidence.", "batch_size": 8, "max_chars_per_comment": 2000, "include_reason": true, "unknown_label": "unknown", "model": null, "temperature": 0.1}, "config_schema": {"type": "object", "properties": {"labels": {"type": "array", "items": {"type": "string"}}, "instructions": {"type": "string"}, "batch_size": {"type": "integer", "minimum": 1, "maximum": 32}, "include_reason": {"type": "boolean"}, "model": {"type": "string"}}}, "models": {"text": "default"}}
+{
+  "id": "comments.classify",
+  "name": "Comment classifier",
+  "version": "0.2.0",
+  "description": "Contextual classification of webpage comments into configurable labels, with reasons and confidence. Batches comments and enforces structured JSON output.",
+  "runtime": {
+    "type": "python",
+    "entry": "plugin.py",
+    "min_version": "3.9"
+  },
+  "capabilities": [
+    "llm.generate",
+    "llm.structured"
+  ],
+  "timeout_seconds": 300,
+  "input": {
+    "type": "object",
+    "required": [
+      "comments"
+    ],
+    "properties": {
+      "comments": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "text"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 20000
+            },
+            "author": {
+              "type": "string"
+            },
+            "context": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        }
+      },
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "instructions": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "page_title": {
+        "type": "string",
+        "maxLength": 500
+      }
+    }
+  },
+  "output": {
+    "type": "object",
+    "required": [
+      "results"
+    ],
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "label"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "summary": {
+        "type": "object"
+      }
+    }
+  },
+  "default_config": {
+    "labels": [
+      "ok",
+      "spam",
+      "toxic",
+      "off-topic"
+    ],
+    "instructions": "Classify each comment in the context of the page it appears on. Be conservative: only use a label other than 'ok' when there is clear evidence.",
+    "batch_size": 8,
+    "max_chars_per_comment": 2000,
+    "include_reason": true,
+    "unknown_label": "unknown",
+    "model": null,
+    "temperature": 0.1
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "instructions": {
+        "type": "string"
+      },
+      "batch_size": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 32
+      },
+      "include_reason": {
+        "type": "boolean"
+      },
+      "model": {
+        "type": "string"
+      }
+    }
+  },
+  "models": {
+    "text": "default"
+  }
+}

@@ -11,6 +11,12 @@ Bound to 127.0.0.1 only, bearer-token authenticated, no CORS headers, and any
 request carrying a browser ``Origin`` is refused unless explicitly allowlisted.
 A webpage therefore cannot drive it.
 
+Optionally the same surface is served on an AF_UNIX socket (``api.unix_socket``,
+mode 0600) so local programs can skip TCP entirely::
+
+    curl --unix-socket ~/Library/Application\ Support/LocalAIHub/hub.sock \
+         -H "Authorization: Bearer $TOKEN" http://localhost/v1/status
+
 Routes
 ------
 
@@ -23,6 +29,7 @@ Routes
 ``GET  /v1/models``                     model backend status
 ``GET  /v1/config``                     effective hub config
 ``GET  /v1/tasks``                      running tasks + recent history
+``GET  /v1/tasks/<id>``                 one task (running or recent)
 ``GET  /v1/events``                     Server-Sent Events stream
 ``GET  /v1/openapi.json``               machine-readable description
 ``POST /v1/task``                       run a task
@@ -36,11 +43,14 @@ Routes
 from __future__ import annotations
 
 import json
+import os
 import queue
 import secrets
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import paths, protocol
@@ -115,6 +125,19 @@ def openapi_document(port: int = 8765) -> dict:
                     "schema": {"type": "string"},
                 }
             ],
+        }
+    }
+    paths_doc["/v1/tasks/{id}"] = {
+        "get": {
+            **envelope("tasks.get for one task id"),
+            "parameters": [
+                {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}
+            ],
+            "responses": {
+                "200": {"description": "protocol result envelope with the task record"},
+                "401": {"description": "missing or invalid bearer token"},
+                "404": {"description": "no running or recent task with that id"},
+            },
         }
     }
     paths_doc["/v1/task"] = {
@@ -213,12 +236,8 @@ class EventBus:
             return len(self._subscribers)
 
 
-def make_server(config=None) -> ThreadingHTTPServer:
-    config = config or load_config()
-    setup_logging(config)
-    bus = EventBus()
-    engine = Engine(config, emit=bus.publish)
-    token = ensure_token(config)
+def _make_handler(config, engine, bus, token, doc_port: int = 8765):
+    """Build the request handler around one engine (shared by both transports)."""
     lock = threading.Lock()
     allowed_origins = {str(origin) for origin in (config.get("api.allowed_origins") or [])}
     allow_token_query = bool(config.get("api.allow_token_query", True))
@@ -330,7 +349,7 @@ def make_server(config=None) -> ThreadingHTTPServer:
             request.update(extra or {})
             with lock:
                 result = engine.handle(request)
-            self._reply(200 if result.get("ok") else 500, result)
+            self._reply(200 if result.get("ok") else _http_status(result), result)
 
         # -- routes -----------------------------------------------------
         def do_GET(self):  # noqa: N802
@@ -342,7 +361,7 @@ def make_server(config=None) -> ThreadingHTTPServer:
             if route == "/v1/events":
                 return self._stream_events()
             if route == "/v1/openapi.json":
-                return self._reply(200, openapi_document(self.server.server_address[1]))
+                return self._reply(200, openapi_document(doc_port))
             if route in ("/", "/v1"):
                 return self._reply(
                     200,
@@ -353,10 +372,24 @@ def make_server(config=None) -> ThreadingHTTPServer:
                         "routes": sorted(
                             list(GET_ROUTES)
                             + list(POST_ROUTES)
-                            + ["/v1/task", "/v1/events", "/v1/domains/{domain}", "/v1/openapi.json"]
+                            + [
+                                "/v1/task",
+                                "/v1/events",
+                                "/v1/domains/{domain}",
+                                "/v1/tasks/{id}",
+                                "/v1/openapi.json",
+                            ]
                         ),
                     },
                 )
+            if route.startswith("/v1/tasks/"):
+                task_id = unquote(route[len("/v1/tasks/"):])
+                if not task_id:
+                    return self._error(
+                        400, protocol.ErrorCode.BAD_REQUEST, "task id is required"
+                    )
+                return self._control("tasks.get", {"task_id": task_id})
+
             if route.startswith("/v1/domains/"):
                 domain = unquote(route[len("/v1/domains/") :])
                 if not domain:
@@ -468,9 +501,70 @@ def make_server(config=None) -> ThreadingHTTPServer:
         def log_message(self, fmt, *args):  # silence default stderr spam
             log.debug("%s - %s", self.address_string(), fmt % args)
 
+    return Handler
+
+
+def _http_status(result: dict) -> int:
+    """Map a protocol error code onto an HTTP status (success is handled by callers)."""
+    code = ((result.get("error") or {}).get("code")) or ""
+    return {
+        protocol.ErrorCode.BAD_REQUEST: 400,
+        protocol.ErrorCode.INVALID_INPUT: 400,
+        protocol.ErrorCode.UNAUTHORIZED: 401,
+        protocol.ErrorCode.FORBIDDEN: 403,
+        protocol.ErrorCode.NOT_FOUND: 404,
+        protocol.ErrorCode.UNKNOWN_TASK: 404,
+        protocol.ErrorCode.UNKNOWN_PLUGIN: 404,
+        protocol.ErrorCode.INPUT_TOO_LARGE: 413,
+        protocol.ErrorCode.RATE_LIMITED: 429,
+    }.get(code, 500)
+
+
+class UnixHTTPServer(ThreadingHTTPServer):
+    """The same HTTP surface on a filesystem socket (no TCP port at all)."""
+
+    address_family = socket.AF_UNIX
+
+    def server_bind(self) -> None:
+        path = Path(self.server_address)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            # A stale socket from a crashed run must not block startup.
+            if path.is_socket():
+                path.unlink()
+            else:
+                raise OSError(f"{path} exists and is not a socket")
+        self.socket.bind(str(path))
+        os.chmod(path, 0o600)
+        self.server_name = "localhost"
+        self.server_port = 0
+        self.server_address = str(path)
+
+    def get_request(self):
+        request, _ = self.socket.accept()
+        # BaseHTTPRequestHandler expects a (host, port) tuple for logging.
+        return request, ("localhost", 0)
+
+    def server_close(self) -> None:
+        super().server_close()
+        try:
+            path = Path(str(self.server_address))
+            if path.is_socket():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def make_server(config=None) -> ThreadingHTTPServer:
+    """TCP transport (127.0.0.1 by default)."""
+    config = config or load_config()
+    setup_logging(config)
+    bus = EventBus()
+    engine = Engine(config, emit=bus.publish)
+    token = ensure_token(config)
     host = str(config.get("api.host", "127.0.0.1"))
     port = int(config.get("api.port", 8765))
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    httpd = ThreadingHTTPServer((host, port), _make_handler(config, engine, bus, token, port))
     httpd.daemon_threads = True
     httpd.hub_engine = engine  # for tests / embedding
     httpd.hub_events = bus
@@ -478,24 +572,100 @@ def make_server(config=None) -> ThreadingHTTPServer:
     return httpd
 
 
-def main() -> int:
-    config = load_config()
-    if not config.get("api.enabled", False):
+def make_unix_server(config=None, path: str | None = None, engine=None, bus=None):
+    """AF_UNIX transport, opt-in through ``api.unix_socket``."""
+    config = config or load_config()
+    setup_logging(config)
+    socket_path = str(path or config.get("api.unix_socket") or "")
+    if not socket_path:
+        raise ValueError("api.unix_socket is not configured")
+    resolved = Path(socket_path).expanduser()
+    if not resolved.is_absolute():
+        resolved = paths.data_dir() / resolved
+    bus = bus or EventBus()
+    engine = engine or Engine(config, emit=bus.publish)
+    token = ensure_token(config)
+    httpd = UnixHTTPServer(str(resolved), _make_handler(config, engine, bus, token, 0))
+    httpd.daemon_threads = True
+    httpd.hub_engine = engine
+    httpd.hub_events = bus
+    log.info("local API listening on unix socket %s (token required)", resolved)
+    return httpd
+
+
+def main(argv=None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="laihub-api", description="Local AI Hub local HTTP API")
+    parser.add_argument("--host", help="bind address (loopback only)")
+    parser.add_argument("--port", type=int, help="TCP port (0 disables the TCP listener)")
+    parser.add_argument("--unix-socket", help="also serve on this AF_UNIX socket path")
+    parser.add_argument("--mock", action="store_true", help="offline mock model backend")
+    parser.add_argument("--force", action="store_true", help="run even if api.enabled is false")
+    args = parser.parse_args(argv)
+
+    extra: dict = {}
+    if args.host or args.port is not None or args.unix_socket:
+        api = extra.setdefault("api", {})
+        if args.host:
+            api["host"] = args.host
+        if args.port is not None:
+            api["port"] = args.port
+        if args.unix_socket:
+            api["unix_socket"] = args.unix_socket
+    if args.mock:
+        extra.setdefault("ollama", {})["mock"] = True
+    config = load_config(extra)
+
+    if not config.get("api.enabled", False) and not args.force:
         print(
             "The local API is disabled. Set api.enabled = true in config/hub.json "
-            "(or run ./install.sh --api)."
+            "(or run ./install.sh --api, or pass --force)."
         )
         return 2
-    server = make_server(config)
-    print(f"Local AI Hub API on http://{server.server_address[0]}:{server.server_address[1]}")
+
+    servers = []
+    tcp_enabled = int(config.get("api.port", 8765)) > 0
+    if tcp_enabled:
+        servers.append(make_server(config))
+    socket_path = str(config.get("api.unix_socket") or "")
+    if socket_path:
+        shared = servers[0] if servers else None
+        servers.append(
+            make_unix_server(
+                config,
+                engine=shared.hub_engine if shared else None,
+                bus=shared.hub_events if shared else None,
+            )
+        )
+    if not servers:
+        print("Nothing to serve: api.port is 0 and api.unix_socket is empty.")
+        return 2
+
+    for server in servers:
+        address = server.server_address
+        if isinstance(address, tuple):
+            print(f"Local AI Hub API on http://{address[0]}:{address[1]}")
+        else:
+            print(f"Local AI Hub API on unix socket {address}")
     print(f"Token file: {paths.data_dir() / str(config.get('api.token_file', 'api-token'))}")
+
+    threads = [
+        threading.Thread(target=server.serve_forever, name=f"api-{index}", daemon=True)
+        for index, server in enumerate(servers)
+    ]
+    for thread in threads:
+        thread.start()
     try:
-        server.serve_forever()
+        while any(thread.is_alive() for thread in threads):
+            time.sleep(0.2)
     except KeyboardInterrupt:
         print("\nstopping")
     finally:
-        server.server_close()
-        server.hub_engine.shutdown()
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        servers[0].hub_engine.shutdown()
     return 0
 
 

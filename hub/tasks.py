@@ -158,6 +158,34 @@ class TaskRegistry:
         items.reverse()  # newest first
         return items[:limit] if limit else items
 
+    def get(self, request_id: str) -> dict | None:
+        """One task by id: running entry or finished history record.
+
+        Returns ``None`` when the id is unknown (never ran, or fell out of the
+        bounded history).  The cancel event is never exposed.
+        """
+        now = time.time()
+        with self._lock:
+            entry = self._running.get(request_id)
+            if entry is not None:
+                return {
+                    "id": entry["id"],
+                    "plugin": entry["plugin"],
+                    "domain": entry["domain"],
+                    "interface": entry["interface"],
+                    "input_hash": entry["input_hash"],
+                    "started_at": entry["started_at"],
+                    "state": "running",
+                    "running_ms": int((now - entry["started_at"]) * 1000),
+                    "cancelling": entry["cancel"].is_set(),
+                }
+            for record in reversed(self._history):
+                if record["id"] == request_id:
+                    return {**record, "state": "cancelled" if record.get("cancelled") else (
+                        "finished" if record.get("ok") else "failed"
+                    )}
+        return None
+
     def counters(self) -> dict:
         with self._lock:
             return {

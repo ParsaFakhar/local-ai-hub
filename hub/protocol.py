@@ -26,7 +26,7 @@ Event (unsolicited, may arrive before the result)::
 
 Control types: ``ping``, ``status``, ``plugins.list``, ``domains.get``,
 ``domains.list``, ``models.list``, ``models.unload``, ``config.get``,
-``tasks.list``, ``task.cancel``, ``cache.clear``, ``shutdown``.
+``tasks.list``, ``tasks.get``, ``task.cancel``, ``cache.clear``, ``shutdown``.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ CONTROL_TYPES = {
     "models.unload",
     "config.get",
     "tasks.list",
+    "tasks.get",
     "task.cancel",
     "cache.clear",
     "shutdown",
@@ -66,6 +67,7 @@ INLINE_CONTROL_TYPES = {
     "shutdown",
     "task.cancel",
     "tasks.list",
+    "tasks.get",
 }
 
 

@@ -65,11 +65,29 @@ class PolicyTests(unittest.TestCase):
         resolved = bridge.policy({"bridge": {"tampermonkey": True}}, self.config(max_requests_per_minute=7))
         self.assertEqual(resolved["max_requests_per_minute"], 7)
         resolved = bridge.policy(
-            {"bridge": {"tampermonkey": True, "max_requests_per_minute": 3, "max_input_bytes": 10}},
+            {
+                "bridge": {
+                    "tampermonkey": True,
+                    "plugins": ["a.b"],
+                    "max_requests_per_minute": 3,
+                    "max_input_bytes": 10,
+                }
+            },
             self.config(max_requests_per_minute=7),
         )
         self.assertEqual(resolved["max_requests_per_minute"], 3)
+        self.assertEqual(resolved["max_input_bytes"], 10)
         self.assertEqual(bridge.denial(resolved, "a.b", 20)[0], "input_too_large")
+        self.assertIsNone(bridge.denial(resolved, "a.b", 10))
+
+    def test_denial_precedence_matches_the_content_script(self):
+        """enabled -> plugin allowlist -> input size (same order as bridge.js)."""
+        domain = {"bridge": {"tampermonkey": True, "plugins": ["a.b"], "max_input_bytes": 10}}
+        resolved = bridge.policy(domain)
+        self.assertEqual(bridge.denial(resolved, "other.plugin", 999)[0], "forbidden")
+        self.assertEqual(bridge.denial(resolved, "a.b", 999)[0], "input_too_large")
+        closed = bridge.policy({"bridge": {"tampermonkey": False, "plugins": ["a.b"]}})
+        self.assertEqual(bridge.denial(closed, "a.b", 999)[0], "forbidden")
 
     def test_nonsense_limits_do_not_disable_the_cap(self):
         resolved = bridge.policy(

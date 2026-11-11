@@ -9,6 +9,7 @@
  *
  * task : { id, input, config, context, models, limits, pluginId }
  * hub  : log(), progress(), generate(), chat(), json()
+ *        every model call accepts { onToken } for streaming partial output
  *
  * The engine owns the model runtime; plugins never call Ollama directly.
  */
@@ -69,6 +70,16 @@ class Hub {
     this._write(JSON.stringify(message) + '\n');
   }
 
+  _resolveToken(message) {
+    const pending = this._pending.get(message.id);
+    if (!pending || typeof pending.onToken !== 'function') return;
+    try {
+      pending.onToken(message.text || '', message.index);
+    } catch (_) {
+      /* a broken plugin callback must not kill the task */
+    }
+  }
+
   _resolveResponse(message) {
     const pending = this._pending.get(message.id);
     if (!pending) return;
@@ -91,30 +102,31 @@ class Hub {
     this._send({ type: 'progress', value, message });
   }
 
-  _call(method, params) {
+  _call(method, params, onToken = null) {
     const id = String(++this._counter);
+    const payload = typeof onToken === 'function' ? Object.assign({}, params, { stream: true }) : params;
     return new Promise((resolve, reject) => {
-      this._pending.set(id, { resolve, reject });
-      this._send({ type: 'llm.request', id, method, params });
+      this._pending.set(id, { resolve, reject, onToken });
+      this._send({ type: 'llm.request', id, method, params: payload });
     });
   }
 
-  async generate(prompt, { model = null, system = null, images = null, options = null } = {}) {
+  async generate(prompt, { model = null, system = null, images = null, options = null, onToken = null } = {}) {
     const params = { prompt, model, system, options };
     if (images && images.length) params.images = images;
-    const result = await this._call('generate', params);
+    const result = await this._call('generate', params, onToken);
     return result.text || '';
   }
 
-  async chat(messages, { model = null, options = null } = {}) {
-    const result = await this._call('chat', { messages, model, options });
+  async chat(messages, { model = null, options = null, onToken = null } = {}) {
+    const result = await this._call('chat', { messages, model, options }, onToken);
     return result.text || '';
   }
 
-  async json(prompt, { schema = null, model = null, system = null, images = null, options = null } = {}) {
+  async json(prompt, { schema = null, model = null, system = null, images = null, options = null, onToken = null } = {}) {
     const params = { prompt, model, system, options, format: schema || 'json' };
     if (images && images.length) params.images = images;
-    const result = await this._call('generate', params);
+    const result = await this._call('generate', params, onToken);
     return parseJSON(result.text || '');
   }
 }
@@ -160,6 +172,10 @@ class PluginRunner {
       try {
         message = JSON.parse(trimmed);
       } catch (_) {
+        return;
+      }
+      if (message.type === 'llm.token') {
+        hub._resolveToken(message);
         return;
       }
       if (message.type === 'llm.response') {

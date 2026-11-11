@@ -31,12 +31,12 @@ def line(status: str, label: str, detail: str = "") -> None:
     print(f"  {colour}{mark}{RESET} {label}{f' — {detail}' if detail else ''}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="laihub doctor")
     parser.add_argument("--task", help="run a plugin as a final check")
     parser.add_argument("--input", default="{}", help="task input JSON")
     parser.add_argument("--mock", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     problems = 0
     config = load_config({"ollama": {"mock": True}} if args.mock else None)

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Local AI Hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local, extensible AI automation platform. Runs plugins and local models through a native messaging host \u2014 no cloud services.",
   "browser_specific_settings": {
     "gecko": {

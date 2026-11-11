@@ -11,6 +11,7 @@ A plugin is a normal Python program::
 
 ``task``  : input, config, context, plugin id
 ``hub``   : log(), progress(), generate(), chat(), json()  (model access)
+            all three model calls accept ``on_token=fn`` for streaming output
 
 The engine owns the model runtime; a plugin never talks to Ollama directly
 and never executes code produced by a model or by a webpage.
@@ -81,9 +82,11 @@ class Hub:
         self._send({"type": "progress", "value": value, "message": message})
 
     # ------------------------------------------------------------------
-    def _call(self, method: str, params: dict) -> dict:
+    def _call(self, method: str, params: dict, on_token: Callable[[str], None] | None = None) -> dict:
         self._counter += 1
         call_id = str(self._counter)
+        if on_token is not None:
+            params = {**params, "stream": True}
         self._send({"type": "llm.request", "id": call_id, "method": method, "params": params})
         while True:
             line = self._in.readline()
@@ -96,7 +99,18 @@ class Hub:
                 message = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if message.get("type") != "llm.response" or message.get("id") != call_id:
+            if message.get("id") != call_id:
+                continue
+            if message.get("type") == "llm.token":
+                # Partial output while the model is still running.  A broken
+                # callback must never take the task down.
+                if on_token is not None:
+                    try:
+                        on_token(message.get("text", ""))
+                    except Exception:  # noqa: BLE001 - the plugin's own bug
+                        pass
+                continue
+            if message.get("type") != "llm.response":
                 continue
             if not message.get("ok"):
                 error = message.get("error") or {}
@@ -114,14 +128,25 @@ class Hub:
         system: str | None = None,
         images: list[str] | None = None,
         options: dict | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> str:
+        """Text inference.  ``on_token`` receives partial output (streaming)."""
         params = {"prompt": prompt, "model": model, "system": system, "options": options}
         if images:
             params["images"] = images
-        return self._call("generate", params).get("text", "")
+        return self._call("generate", params, on_token).get("text", "")
 
-    def chat(self, messages: list[dict], *, model: str | None = None, options: dict | None = None) -> str:
-        return self._call("chat", {"messages": messages, "model": model, "options": options}).get("text", "")
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        options: dict | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> str:
+        return self._call(
+            "chat", {"messages": messages, "model": model, "options": options}, on_token
+        ).get("text", "")
 
     def json(
         self,
@@ -132,8 +157,13 @@ class Hub:
         system: str | None = None,
         images: list[str] | None = None,
         options: dict | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> Any:
-        """Structured output.  ``schema`` is enforced by the model runtime."""
+        """Structured output.  ``schema`` is enforced by the model runtime.
+
+        With ``on_token`` the raw fragments are streamed as they arrive; the
+        return value is still the parsed JSON object once the call completes.
+        """
         params = {
             "prompt": prompt,
             "model": model,
@@ -143,7 +173,7 @@ class Hub:
         }
         if images:
             params["images"] = images
-        text = self._call("generate", params).get("text", "")
+        text = self._call("generate", params, on_token).get("text", "")
         return parse_json(text)
 
 

@@ -49,6 +49,74 @@ class OllamaClient:
         except (TimeoutError, json.JSONDecodeError) as exc:
             raise OllamaError(f"Ollama request failed: {exc}") from exc
 
+    def _stream(
+        self,
+        path: str,
+        body: dict,
+        on_token=None,
+        timeout: float | None = None,
+    ) -> dict:
+        """POST with ``stream: true`` and re-assemble the response.
+
+        Ollama answers with newline-delimited JSON frames; each carries a
+        fragment (``response`` for /api/generate, ``message.content`` for
+        /api/chat) and the last one has ``done: true`` plus timing counters.
+        ``on_token`` is called with every non-empty fragment so callers can
+        forward partial output while the model is still running.
+        """
+        url = f"{self.base_url}{path}"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps({**body, "stream": True}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        pieces: list[str] = []
+        final: dict = {}
+        try:
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
+                for raw in response:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        frame = json.loads(line)
+                    except json.JSONDecodeError:
+                        log.debug("ignoring non-JSON stream frame: %s", line[:120])
+                        continue
+                    if not isinstance(frame, dict):
+                        continue
+                    if frame.get("error"):
+                        raise OllamaError(f"Ollama stream error: {frame['error']}")
+                    fragment = frame.get("response")
+                    if fragment is None:
+                        fragment = (frame.get("message") or {}).get("content", "")
+                    if fragment:
+                        pieces.append(fragment)
+                        if on_token is not None:
+                            on_token(fragment)
+                    if frame.get("done"):
+                        final = frame
+                        break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:500]
+            raise OllamaError(f"Ollama HTTP {exc.code}: {detail}", status=exc.code) from exc
+        except urllib.error.URLError as exc:
+            raise OllamaError(
+                f"cannot reach Ollama at {self.base_url} ({exc.reason})", code="model_unavailable"
+            ) from exc
+        except (TimeoutError, OSError) as exc:
+            raise OllamaError(f"Ollama stream failed: {exc}") from exc
+
+        text = "".join(pieces)
+        if path.endswith("/chat"):
+            merged = dict(final)
+            merged["message"] = {**(final.get("message") or {}), "content": text}
+            return merged
+        merged = dict(final)
+        merged["response"] = text
+        return merged
+
     def is_alive(self, timeout: float = 2.0) -> bool:
         try:
             self._request("GET", "/api/version", timeout=timeout)
@@ -75,6 +143,8 @@ class OllamaClient:
         fmt: Any = None,
         options: dict | None = None,
         keep_alive: Any = "5m",
+        stream: bool = False,
+        on_token=None,
     ) -> dict:
         body: dict[str, Any] = {
             "model": model,
@@ -89,6 +159,8 @@ class OllamaClient:
             body["images"] = images
         if fmt is not None:
             body["format"] = fmt
+        if stream:
+            return self._stream("/api/generate", body, on_token=on_token)
         return self._request("POST", "/api/generate", body)
 
     def chat(
@@ -99,6 +171,8 @@ class OllamaClient:
         fmt: Any = None,
         options: dict | None = None,
         keep_alive: Any = "5m",
+        stream: bool = False,
+        on_token=None,
     ) -> dict:
         body: dict[str, Any] = {
             "model": model,
@@ -109,6 +183,8 @@ class OllamaClient:
         }
         if fmt is not None:
             body["format"] = fmt
+        if stream:
+            return self._stream("/api/chat", body, on_token=on_token)
         return self._request("POST", "/api/chat", body)
 
     def unload(self, model: str) -> None:

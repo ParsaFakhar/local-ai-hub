@@ -26,6 +26,47 @@ log = get_logger("engine")
 
 Emit = Callable[[dict], None]
 
+#: Streaming events are coalesced: one native-messaging frame per ~48 chars or
+#: per 120 ms, whichever comes first.  Thousands of tiny frames would otherwise
+#: dominate the pipe (and Firefox's 1 MiB per-message budget).
+TOKEN_FLUSH_CHARS = 48
+TOKEN_FLUSH_SECONDS = 0.12
+MAX_TOKEN_EVENTS = 4000
+
+
+class _TokenForwarder:
+    """Buffer model fragments and emit them as ``model.token`` task events."""
+
+    def __init__(self, emit: Callable[[str], None]):
+        self._emit = emit
+        self._buffer: list[str] = []
+        self._chars = 0
+        self._last = time.monotonic()
+        self.events = 0
+        self.tokens = 0
+
+    def __call__(self, fragment: str) -> None:
+        if not fragment:
+            return
+        self.tokens += 1
+        self._buffer.append(fragment)
+        self._chars += len(fragment)
+        now = time.monotonic()
+        if self._chars >= TOKEN_FLUSH_CHARS or now - self._last >= TOKEN_FLUSH_SECONDS:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._buffer or self.events >= MAX_TOKEN_EVENTS:
+            self._buffer.clear()
+            self._chars = 0
+            return
+        text = "".join(self._buffer)
+        self._buffer.clear()
+        self._chars = 0
+        self._last = time.monotonic()
+        self.events += 1
+        self._emit(text)
+
 
 def _is_error_envelope(value: Any) -> bool:
     """True for a complete ``{"type": "result", "ok": false, ...}`` envelope."""
@@ -155,6 +196,22 @@ class Engine:
             "counters": self.tasks.counters(),
         }
 
+    def _handle_tasks_get(self, request: dict) -> dict:
+        target = request.get("task_id") or request.get("target") or request.get("task")
+        if not isinstance(target, str) or not target:
+            return protocol.make_error(
+                request["id"], protocol.ErrorCode.BAD_REQUEST, "'task_id' must be a non-empty string"
+            )
+        record = self.tasks.get(target)
+        if record is None:
+            return protocol.make_error(
+                request["id"],
+                protocol.ErrorCode.UNKNOWN_TASK,
+                f"no running or recent task with id {target!r}",
+                {"history_size": self.config.get("tasks.history_size", 100)},
+            )
+        return {"task": record}
+
     def _handle_task_cancel(self, request: dict) -> dict:
         target = request.get("task_id") or request.get("target")
         if target in (None, "", "*"):
@@ -253,6 +310,17 @@ class Engine:
         merged = deep_merge(merged, request_options)
         return merged, feature
 
+    def _requested_timeout(self, request: dict) -> float | None:
+        """A local caller may shorten/extend one task; a webpage may not."""
+        raw = request.get("timeout_seconds")
+        if raw is None or self._is_page_interface((request.get("context") or {}).get("interface")):
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if 0 < value <= 3600 else None
+
     def _handle_task(self, request: dict) -> dict:
         request_id = request["id"]
         plugin_id = request["plugin"]
@@ -342,6 +410,14 @@ class Engine:
         def llm_handler(method: str, params: dict) -> dict:
             if method not in ("generate", "chat"):
                 raise ModelError(f"unsupported model method {method!r}")
+            stream = bool(params.get("stream")) or bool(self.config.get("ollama.stream", False))
+            forwarder = None
+            if stream:
+                forwarder = _TokenForwarder(
+                    lambda text: self._task_event(
+                        request_id, "model.token", {"plugin": plugin.id, "text": text}
+                    )
+                )
             if enforce_capabilities:
                 reason = capabilities.denial(plugin.capabilities, method, params)
                 if reason:
@@ -363,6 +439,8 @@ class Engine:
                     images=params.get("images"),
                     fmt=params.get("format"),
                     options=params.get("options"),
+                    stream=stream,
+                    on_token=forwarder,
                 )
             else:
                 result = self.models.chat(
@@ -370,7 +448,11 @@ class Engine:
                     model=params.get("model"),
                     fmt=params.get("format"),
                     options=params.get("options"),
+                    stream=stream,
+                    on_token=forwarder,
                 )
+            if forwarder is not None:
+                forwarder.flush()
             if result.get("model") and result["model"] not in used_models:
                 used_models.append(result["model"])
             return result
@@ -427,6 +509,7 @@ class Engine:
                 llm_handler=llm_handler,
                 on_event=lambda name, data: self._task_event(request_id, name, data),
                 cancel_event=cancel_event,
+                timeout=self._requested_timeout(request),
             )
         except PluginRuntimeError as exc:
             self._bump(ok=False)

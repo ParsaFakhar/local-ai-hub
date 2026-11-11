@@ -1,1 +1,129 @@
-{"id": "images.tag", "name": "Image tagger", "version": "0.2.0", "description": "Describes images and produces normalized tags using a local vision model. Images are supplied by the interface as base64; the plugin never fetches URLs itself.", "runtime": {"type": "python", "entry": "plugin.py", "min_version": "3.9"}, "capabilities": ["llm.vision", "llm.structured"], "timeout_seconds": 600, "input": {"type": "object", "required": ["images"], "properties": {"images": {"type": "array", "maxItems": 100, "items": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string", "maxLength": 128}, "data_base64": {"type": "string"}, "url": {"type": "string", "maxLength": 2000}, "alt": {"type": "string", "maxLength": 500}, "filename": {"type": "string", "maxLength": 300}}}}, "instructions": {"type": "string", "maxLength": 4000}, "max_tags": {"type": "integer", "minimum": 1, "maximum": 30}}}, "output": {"type": "object", "required": ["results"], "properties": {"results": {"type": "array", "items": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "description": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "error": {"type": "string"}}}}}}, "default_config": {"max_tags": 8, "instructions": "Describe the image factually in one sentence, then list concrete visual tags (subject, setting, style, dominant colours). Do not guess identities of real people.", "model": null, "vision_model": null, "tag_style": "lowercase", "language": "en", "include_safety_flags": false}, "config_schema": {"type": "object", "properties": {"max_tags": {"type": "integer", "minimum": 1, "maximum": 30}, "instructions": {"type": "string"}, "vision_model": {"type": "string"}, "language": {"type": "string"}}}, "models": {"vision": "default"}}
+{
+  "id": "images.tag",
+  "name": "Image tagger",
+  "version": "0.2.0",
+  "description": "Describes images and produces normalized tags using a local vision model. Images are supplied by the interface as base64; the plugin never fetches URLs itself.",
+  "runtime": {
+    "type": "python",
+    "entry": "plugin.py",
+    "min_version": "3.9"
+  },
+  "capabilities": [
+    "llm.vision",
+    "llm.structured"
+  ],
+  "timeout_seconds": 600,
+  "input": {
+    "type": "object",
+    "required": [
+      "images"
+    ],
+    "properties": {
+      "images": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "data_base64": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "filename": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        }
+      },
+      "instructions": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "max_tags": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30
+      }
+    }
+  },
+  "output": {
+    "type": "object",
+    "required": [
+      "results"
+    ],
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "error": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "default_config": {
+    "max_tags": 8,
+    "instructions": "Describe the image factually in one sentence, then list concrete visual tags (subject, setting, style, dominant colours). Do not guess identities of real people.",
+    "model": null,
+    "vision_model": null,
+    "tag_style": "lowercase",
+    "language": "en",
+    "include_safety_flags": false
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "max_tags": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30
+      },
+      "instructions": {
+        "type": "string"
+      },
+      "vision_model": {
+        "type": "string"
+      },
+      "language": {
+        "type": "string"
+      }
+    }
+  },
+  "models": {
+    "vision": "default"
+  }
+}

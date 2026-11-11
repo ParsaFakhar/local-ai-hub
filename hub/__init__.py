@@ -8,7 +8,7 @@ Interfaces (Firefox native messaging, CLI, HTTP API, ...) are thin adapters
 around :class:`hub.engine.Engine`.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 PROTOCOL_VERSION = "1.0"
 APP_NAME = "Local AI Hub"
 NATIVE_HOST_NAME = "local_ai_hub"
