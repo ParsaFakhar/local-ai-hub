@@ -7,7 +7,8 @@
  *     return { greeting: `Hello, ${task.input.name || 'world'}!` };
  *   }).run();
  *
- * task : { id, input, config, context, models, limits, pluginId }
+ * task : { id, input, config, context, models, limits, pluginId,
+ *          stateDir, statePath(name) }
  * hub  : log(), progress(), generate(), chat(), json()
  *        every model call accepts { onToken } for streaming partial output
  *
@@ -17,6 +18,18 @@
 'use strict';
 
 const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
+
+/** Writable per-plugin state directory (LOCAL_AI_HUB_DATA is set by the engine). */
+function stateDir(pluginId) {
+  const base = process.env.LOCAL_AI_HUB_DATA;
+  const root = base ? base : path.join(process.env.HOME || '.', '.local-ai-hub');
+  const safe = String(pluginId || 'plugin').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const directory = path.join(root, 'plugin-state', safe);
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
+}
 
 class LLMError extends Error {}
 class PluginError extends Error {
@@ -146,6 +159,20 @@ function makeTask(payload) {
     option(key, fallback = null) {
       return Object.prototype.hasOwnProperty.call(this.config, key) ? this.config[key] : fallback;
     },
+    get stateDir() {
+      return stateDir(plugin.id || 'unknown');
+    },
+    statePath(name) {
+      const raw = String(name || '');
+      if (path.isAbsolute(raw)) return raw;
+      const directory = stateDir(plugin.id || 'unknown');
+      const resolved = path.resolve(directory, raw);
+      if (resolved !== directory && !resolved.startsWith(directory + path.sep)) {
+        throw new PluginError(`state file ${raw} escapes the plugin state directory`, 'invalid_input');
+      }
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      return resolved;
+    },
   };
 }
 
@@ -212,4 +239,4 @@ function Plugin(handler) {
   return new PluginRunner(handler);
 }
 
-module.exports = { Plugin, PluginRunner, Hub, LLMError, PluginError, parseJSON };
+module.exports = { Plugin, PluginRunner, Hub, LLMError, PluginError, parseJSON, stateDir };

@@ -9,7 +9,7 @@ A plugin is a normal Python program::
 
     Plugin(main).run()
 
-``task``  : input, config, context, plugin id
+``task``  : input, config, context, plugin id, state_dir / state_path()
 ``hub``   : log(), progress(), generate(), chat(), json()  (model access)
             all three model calls accept ``on_token=fn`` for streaming output
 
@@ -20,14 +20,31 @@ and never executes code produced by a model or by a webpage.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import traceback
+from pathlib import Path
 from typing import Any, Callable
 
-__all__ = ["Plugin", "Task", "Hub", "LLMError", "PluginError"]
+__all__ = ["Plugin", "Task", "Hub", "LLMError", "PluginError", "state_dir"]
 
 PROTOCOL = "1.0"
+
+
+def state_dir(plugin_id: str) -> Path:
+    """Writable, per-plugin state directory (created on first use).
+
+    ``LOCAL_AI_HUB_DATA`` is provided by the engine, so a plugin's private
+    files live next to the hub's other state instead of inside the (possibly
+    read-only, possibly version-controlled) installation folder.
+    """
+    base = os.environ.get("LOCAL_AI_HUB_DATA")
+    root = Path(base).expanduser() if base else Path.home() / ".local-ai-hub"
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", str(plugin_id) or "plugin")
+    path = root / "plugin-state" / safe
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class LLMError(RuntimeError):
@@ -58,6 +75,23 @@ class Task:
 
     def option(self, key: str, default: Any = None) -> Any:
         return self.config.get(key, default)
+
+    @property
+    def state_dir(self) -> Path:
+        """This plugin's private writable directory."""
+        return state_dir(self.plugin_id)
+
+    def state_path(self, name: str) -> Path:
+        """A file inside :attr:`state_dir`; path escapes are rejected."""
+        candidate = Path(str(name)).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        directory = self.state_dir
+        resolved = (directory / candidate).resolve()
+        if directory.resolve() not in resolved.parents and resolved != directory.resolve():
+            raise PluginError(f"state file {name!r} escapes the plugin state directory", "invalid_input")
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        return resolved
 
 
 class Hub:

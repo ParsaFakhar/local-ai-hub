@@ -71,6 +71,7 @@ def _child_env(plugin: Plugin) -> dict:
         "PYTHONUNBUFFERED": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "LOCAL_AI_HUB_HOME": str(root),
+        "LOCAL_AI_HUB_DATA": str(paths.data_dir()),
         "LOCAL_AI_HUB_PLUGIN_DIR": str(plugin.directory),
         "LOCAL_AI_HUB_PLUGIN_ID": plugin.id,
         "LOCAL_AI_HUB_PROTOCOL": "1.0",
