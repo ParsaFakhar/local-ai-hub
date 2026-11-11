@@ -149,7 +149,11 @@ def read_ledger(path) -> list[dict]:
     entries = data.get("entries") if isinstance(data, dict) else data
     if not isinstance(entries, list):
         return []
-    cleaned = [sanitize_decision(entry, entry.get("scope", "default")) for entry in entries]
+    cleaned = [
+        sanitize_decision(entry, entry.get("scope", "default"))
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
     return [entry for entry in cleaned if entry and entry["decision"] in TERMINAL_DECISIONS]
 
 

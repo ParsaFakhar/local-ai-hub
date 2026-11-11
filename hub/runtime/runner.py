@@ -279,7 +279,9 @@ def run_plugin(
                                         }
                                     )
 
-                            llm_result = llm_handler(message.get("method", "generate"), params)
+                            llm_result = llm_handler(
+                                message.get("method", "generate"), params, on_token
+                            )
                             send(
                                 {
                                     "type": "llm.response",

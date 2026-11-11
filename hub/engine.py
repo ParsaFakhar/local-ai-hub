@@ -407,17 +407,34 @@ class Engine:
         used_models: list[str] = []
         enforce_capabilities = bool(self.config.get("security.enforce_capabilities", True))
 
-        def llm_handler(method: str, params: dict) -> dict:
+        def llm_handler(method: str, params: dict, on_token=None) -> dict:
+            """Broker one model call for a plugin.
+
+            ``on_token`` is the runner's sink for ``llm.token`` frames: raw
+            fragments go straight to the plugin (SDK ``on_token``/``onToken``),
+            while the coalescing forwarder produces ``model.token`` task events
+            for the interface.  Either consumer may be absent.
+            """
             if method not in ("generate", "chat"):
                 raise ModelError(f"unsupported model method {method!r}")
             stream = bool(params.get("stream")) or bool(self.config.get("ollama.stream", False))
             forwarder = None
+            sink = None
             if stream:
                 forwarder = _TokenForwarder(
                     lambda text: self._task_event(
                         request_id, "model.token", {"plugin": plugin.id, "text": text}
                     )
                 )
+
+                def sink(fragment: str) -> None:
+                    if on_token is not None:
+                        try:
+                            on_token(fragment)
+                        except Exception:  # noqa: BLE001 - a broken pipe must not kill the model call
+                            log.debug("token sink for %s stopped accepting frames", plugin.id)
+                    forwarder(fragment)
+
             if enforce_capabilities:
                 reason = capabilities.denial(plugin.capabilities, method, params)
                 if reason:
@@ -440,7 +457,7 @@ class Engine:
                     fmt=params.get("format"),
                     options=params.get("options"),
                     stream=stream,
-                    on_token=forwarder,
+                    on_token=sink,
                 )
             else:
                 result = self.models.chat(
@@ -449,7 +466,7 @@ class Engine:
                     fmt=params.get("format"),
                     options=params.get("options"),
                     stream=stream,
-                    on_token=forwarder,
+                    on_token=sink,
                 )
             if forwarder is not None:
                 forwarder.flush()

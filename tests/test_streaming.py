@@ -230,41 +230,38 @@ class ModelManagerStreamingTests(unittest.TestCase):
         self.assertFalse(self.manager().status()["stream"])
 
 
+# The fixtures live in a temporary plugins directory, so they import the SDK by
+# absolute path and use the documented ``Plugin(handler).run()`` entry point.
+SDK_PYTHON = str(ROOT / "sdk" / "python")
+SDK_JS = str(ROOT / "sdk" / "js" / "local_ai_hub.js")
+
 STREAM_PLUGIN_PY = """
 import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk" / "python"))
+sys.path.insert(0, "@SDK_PYTHON@")
 from local_ai_hub import Plugin
-
-plugin = Plugin()
 
 def main(task, hub):
     fragments = []
     text = hub.generate("say something", on_token=fragments.append)
     return {"text": text, "fragments": fragments, "joined": "".join(fragments)}
 
-plugin.run(main)
-"""
+Plugin(main).run()
+""".replace("@SDK_PYTHON@", SDK_PYTHON)
 
 STREAM_PLUGIN_JS = """
 'use strict';
-const path = require('path');
-const { Plugin } = require(path.resolve(__dirname, '..', '..', 'sdk', 'js', 'local_ai_hub.js'));
-const plugin = new Plugin();
-plugin.run(async (task, hub) => {
+const { Plugin } = require('@SDK_JS@');
+Plugin(async (task, hub) => {
   const fragments = [];
   const text = await hub.generate('say something', { onToken: (t) => fragments.push(t) });
   return { text, fragments, joined: fragments.join('') };
-});
-"""
+}).run();
+""".replace("@SDK_JS@", SDK_JS)
 
 BROKEN_CALLBACK_PLUGIN = """
 import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk" / "python"))
+sys.path.insert(0, "@SDK_PYTHON@")
 from local_ai_hub import Plugin
-
-plugin = Plugin()
 
 def main(task, hub):
     def boom(fragment):
@@ -272,8 +269,8 @@ def main(task, hub):
     text = hub.generate("say something", on_token=boom)
     return {"text": text}
 
-plugin.run(main)
-"""
+Plugin(main).run()
+""".replace("@SDK_PYTHON@", SDK_PYTHON)
 
 
 class EngineStreamingTests(unittest.TestCase):
@@ -319,7 +316,12 @@ class EngineStreamingTests(unittest.TestCase):
         settings.update(ollama)
         engine = Engine(
             load_config(
-                {"ollama": settings, "plugins": {"paths": [str(self.plugins)]}}
+                {
+                    "ollama": settings,
+                    # ``plugins.paths`` replaces the default list, so the bundled
+                    # plugins have to be named explicitly alongside the fixtures.
+                    "plugins": {"paths": [str(ROOT / "plugins"), str(self.plugins)]},
+                }
             ),
             emit=events.append,
         )

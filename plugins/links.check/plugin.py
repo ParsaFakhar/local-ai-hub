@@ -42,12 +42,13 @@ ISSUE_WEIGHTS = {
     "many_subdomains": 0.1,
     "very_long_url": 0.1,
     "empty_href": 0.2,
+    "not_allowlisted": 0.3,
     "duplicate": 0.0,
     "non_http_scheme": 0.0,
 }
 
 URL_IN_TEXT = re.compile(r"\b(?:https?://)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:/[^\s]*)?", re.IGNORECASE)
-IP_HOST = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$|^\[[0-9a-f:]+\]$", re.IGNORECASE)
+IP_HOST = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
 def host_of(url: str, treat_www_same: bool) -> str:
@@ -143,7 +144,7 @@ def audit(link: dict, page_url: str, config: dict, statuses: dict) -> dict:
                 issues.append("mixed_content")
         if host.startswith("xn--") or ".xn--" in host:
             issues.append("punycode_host")
-        if IP_HOST.match(host):
+        if IP_HOST.match(host) or ":" in host:  # IPv4 literal, or IPv6 (urlsplit strips the brackets)
             issues.append("ip_literal_host")
         if host in shorteners or registrable(host) in shorteners:
             issues.append("shortener")
@@ -177,10 +178,11 @@ def audit(link: dict, page_url: str, config: dict, statuses: dict) -> dict:
         entry = entry.get("status")
     if isinstance(entry, (int, float)) and not isinstance(entry, bool):
         status = int(entry)
-        if status >= 400:
-            issues.append("dead_link")
-        elif status >= 500:
+        # 5xx first: a server error is transient, a 4xx is a dead target.
+        if status >= 500:
             issues.append("server_error")
+        elif status >= 400:
+            issues.append("dead_link")
         elif 300 <= status < 400:
             issues.append("redirect")
 

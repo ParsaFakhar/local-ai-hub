@@ -79,7 +79,9 @@ NAME_HINTS = [
 
 
 def normalize_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
+    """``"userPassword"``, ``"user-password"``, ``"USER PASSWORD"`` → ``user_password``."""
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
 def is_blocked(field: dict, config: dict) -> str | None:
@@ -91,7 +93,10 @@ def is_blocked(field: dict, config: dict) -> str | None:
     )
     for pattern in config.get("blocked_name_patterns", []):
         token = normalize_key(pattern)
-        if token and token in haystack:
+        # Match at a word start, not anywhere inside a word: "pin" must block
+        # ``pin_code`` but not ``shipping_address``, while ``userPassword``
+        # still blocks because normalize_key() splits camelCase.
+        if token and re.search(rf"(?:^|[ _]){re.escape(token)}", haystack):
             return f"field looks sensitive (matched '{pattern}')"
     return None
 

@@ -94,6 +94,8 @@ def highlights_schema(ids: list[str], count: int) -> dict:
 
 
 def clean_list(value, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
     out: list[str] = []
     for entry in value or []:
         text = str(entry).strip()
@@ -179,6 +181,7 @@ def main(task, hub):
             merged = partials[0]
 
     highlights: list[dict] = []
+    picked: set[str] = set()
     if items and highlight_count > 0:
         candidates = [
             {"id": str(item.get("id", "")), "text": str(item.get("text", ""))[:600]}
@@ -201,14 +204,21 @@ def main(task, hub):
                 data = hub.json(prompt, schema=highlights_schema(ids, highlight_count),
                                 system=SYSTEM_PROMPT, model=model, options=options)
                 for entry in (data or {}).get("highlights", []) or []:
-                    if isinstance(entry, dict) and str(entry.get("id")) in ids:
-                        highlights.append(
-                            {
-                                "id": str(entry["id"]),
-                                "text": str(entry.get("text", ""))[:200],
-                                "why": str(entry.get("why", ""))[:200],
-                            }
-                        )
+                    if not isinstance(entry, dict):
+                        continue
+                    identifier = str(entry.get("id", ""))
+                    if identifier not in ids or identifier in picked:
+                        continue  # hallucinated or repeated id
+                    picked.add(identifier)
+                    highlights.append(
+                        {
+                            "id": identifier,
+                            "text": str(entry.get("text", ""))[:200],
+                            "why": str(entry.get("why", ""))[:200],
+                        }
+                    )
+                    if len(highlights) >= highlight_count:
+                        break  # the schema asks for a cap; enforce it anyway
             except Exception as exc:  # noqa: BLE001 - highlights are optional
                 hub.log(f"highlights skipped: {exc}", "warning")
 
