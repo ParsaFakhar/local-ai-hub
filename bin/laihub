@@ -1,0 +1,11 @@
+#!/bin/sh
+# Local AI Hub command line interface.
+set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+LOCAL_AI_HUB_HOME="$ROOT"
+export LOCAL_AI_HUB_HOME
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+PYTHON=${LOCAL_AI_HUB_PYTHON:-python3}
+exec "$PYTHON" "$ROOT/scripts/run_task.py" "$@"

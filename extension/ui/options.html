@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Local AI Hub — Settings</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <header class="app">
+      <span class="dot" id="dot"></span>
+      <div>
+        <h1>Local AI Hub</h1>
+        <div class="sub" id="subtitle">settings</div>
+      </div>
+      <span class="spacer"></span>
+      <span class="small muted" id="version"></span>
+    </header>
+
+    <div class="tabs">
+      <button data-tab="domains" class="active">Domains</button>
+      <button data-tab="plugins">Plugins</button>
+      <button data-tab="hub">Hub</button>
+      <button data-tab="diagnostics">Diagnostics</button>
+    </div>
+
+    <!-- DOMAINS ---------------------------------------------------------- -->
+    <section id="tab-domains">
+      <div class="notice" id="domains-note">
+        File-based domain configs come from the native host. Overrides edited here are stored in
+        Firefox and merged on top of them.
+      </div>
+      <div class="grid2">
+        <div>
+          <div class="list" id="domain-list"></div>
+          <div class="row" style="margin-top:10px">
+            <input id="new-domain" placeholder="example.org" style="flex:1" />
+            <button id="add-domain">Add</button>
+          </div>
+          <div class="actions" style="margin-top:10px">
+            <button id="export-config">Export all</button>
+            <button id="import-config">Import</button>
+            <input type="file" id="import-file" accept="application/json" class="hidden" />
+          </div>
+        </div>
+        <div>
+          <div class="card" style="margin:0">
+            <h2>Override for <span class="mono" id="current-domain">—</span></h2>
+            <div class="row">
+              <span class="muted small">Insert feature template:</span>
+              <select id="template-plugin"></select>
+              <button id="insert-template">Insert</button>
+              <span class="grow"></span>
+              <button id="validate">Validate</button>
+              <button class="primary" id="save-domain">Save</button>
+            </div>
+            <textarea id="domain-editor" spellcheck="false" placeholder='{ "features": { … } }'></textarea>
+            <div class="row">
+              <span class="small muted" id="editor-status">JSON override, merged over the host's file config.</span>
+              <span class="grow"></span>
+              <button id="reload-domain">Reload</button>
+              <button class="danger" id="delete-domain">Delete override</button>
+            </div>
+          </div>
+          <div class="card" style="margin:12px 0 0">
+            <h2>Effective configuration (host file + override)</h2>
+            <pre class="output" id="effective">{}</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLUGINS ---------------------------------------------------------- -->
+    <section id="tab-plugins" class="hidden">
+      <div class="card">
+        <h2>Registered plugins</h2>
+        <table>
+          <thead>
+            <tr><th>Id</th><th>Runtime</th><th>Version</th><th>Description</th><th></th></tr>
+          </thead>
+          <tbody id="plugin-rows"></tbody>
+        </table>
+        <div class="row" style="margin-top:10px">
+          <button id="reload-plugins">Reload list</button>
+          <span class="small muted">Plugins are discovered from <span class="mono">plugins/</span> — no core changes needed.</span>
+        </div>
+        <pre class="output hidden" id="plugin-output"></pre>
+      </div>
+    </section>
+
+    <!-- HUB -------------------------------------------------------------- -->
+    <section id="tab-hub" class="hidden">
+      <div class="card">
+        <h2>Extension behaviour</h2>
+        <div class="field">
+          <span class="label">Connect to host automatically</span>
+          <label><input type="checkbox" id="set-autoConnect" /> enabled</label>
+        </div>
+        <div class="field">
+          <span class="label">Show the page panel</span>
+          <label><input type="checkbox" id="set-showPanel" /> enabled</label>
+          <span class="hint">Alt+Shift+H toggles it per page</span>
+        </div>
+        <div class="field">
+          <span class="label">Auto-run features marked auto_run</span>
+          <label><input type="checkbox" id="set-autoRun" /> enabled</label>
+        </div>
+        <div class="field">
+          <span class="label">Task timeout (seconds)</span>
+          <input type="number" id="set-requestTimeout" min="10" max="1800" style="width:110px" />
+        </div>
+        <div class="field">
+          <span class="label">Max items per task</span>
+          <input type="number" id="set-maxItems" min="1" max="500" style="width:110px" />
+        </div>
+        <div class="field">
+          <span class="label">Image downscale (max px)</span>
+          <input type="number" id="set-imageMaxSize" min="128" max="2048" style="width:110px" />
+          <span class="hint">smaller = faster local vision, less RAM</span>
+        </div>
+        <div class="field">
+          <span class="label">Image JPEG quality</span>
+          <input type="number" id="set-imageQuality" min="0.3" max="1" step="0.05" style="width:110px" />
+        </div>
+        <div class="field">
+          <span class="label">Debug logging</span>
+          <label><input type="checkbox" id="set-debug" /> enabled</label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="save-settings">Save settings</button>
+          <span class="small muted" id="settings-status"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Local runtime</h2>
+        <div class="row"><span class="k">Model / runtime</span><span class="v">configured in <span class="mono">config/hub.json</span> on your Mac</span></div>
+        <div class="row"><span class="k">State dir</span><span class="v mono">~/Library/Application Support/LocalAIHub</span></div>
+        <div class="row"><span class="k">Host log</span><span class="v mono">…/LocalAIHub/logs/hub.log</span></div>
+        <div class="actions" style="margin-top:10px">
+          <button id="unload-models">Unload models now</button>
+          <button id="show-config">Show hub config</button>
+        </div>
+        <pre class="output hidden" id="hub-config"></pre>
+      </div>
+    </section>
+
+    <!-- DIAGNOSTICS ------------------------------------------------------ -->
+    <section id="tab-diagnostics" class="hidden">
+      <div class="card">
+        <h2>Connection</h2>
+        <div class="actions">
+          <button id="diag-refresh">Refresh status</button>
+          <button id="diag-ping">Ping host</button>
+          <button id="diag-copy">Copy diagnostics</button>
+        </div>
+        <pre class="output" id="diag-status">{}</pre>
+      </div>
+      <div class="card">
+        <h2>Recent events</h2>
+        <pre class="output" id="diag-log"></pre>
+      </div>
+      <div class="card">
+        <h2>If the host is not connected</h2>
+        <ol class="small">
+          <li>Run <code>./install.sh</code> in the project folder (registers the native manifest).</li>
+          <li>Check <code>~/Library/Application Support/Mozilla/NativeMessagingHosts/local_ai_hub.json</code>.</li>
+          <li>Load the extension in Firefox Nightly via <code>about:debugging</code> → This Nightly → Load Temporary Add-on.</li>
+          <li>Read <code>~/Library/Application Support/LocalAIHub/logs/hub.log</code>.</li>
+        </ol>
+      </div>
+    </section>
+
+    <script src="../lib/protocol.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

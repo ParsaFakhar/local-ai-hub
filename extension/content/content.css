@@ -1,0 +1,32 @@
+/* Local AI Hub — page-level result styling.
+   Only classes the hub itself adds; the control panel lives in a shadow root. */
+
+.lah-badge {
+  display: inline-block;
+  margin: 2px 0 2px 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 500 11px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #10131a;
+  background: #d0ebff;
+  border: 1px solid #74c0fc;
+  vertical-align: middle;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lah-badge[data-tone="spam"] { background: #ffe3e3; border-color: #ffa8a8; }
+.lah-badge[data-tone="toxic"] { background: #ffc9c9; border-color: #ff8787; }
+.lah-badge[data-tone="off-topic"] { background: #fff3bf; border-color: #ffd43b; }
+.lah-badge[data-tone="ok"] { background: #d3f9d8; border-color: #8ce99a; }
+.lah-badge[data-tone="unknown"] { background: #e9ecef; border-color: #ced4da; }
+
+.lah-flag-spam { outline: 1px dashed #ff8787 !important; outline-offset: 2px; }
+.lah-flag-toxic { outline: 1px dashed #e03131 !important; outline-offset: 2px; }
+.lah-flag-offtopic { outline: 1px dashed #f59f00 !important; outline-offset: 2px; }
+
+.lah-hidden { display: none !important; }
+
+[data-lah-id] { scroll-margin-top: 80px; }

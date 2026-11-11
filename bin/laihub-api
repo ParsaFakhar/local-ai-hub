@@ -1,0 +1,10 @@
+#!/bin/sh
+# Local AI Hub — experimental local HTTP API (enable with ./install.sh --api).
+set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+LOCAL_AI_HUB_HOME="$ROOT"
+export LOCAL_AI_HUB_HOME
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec "${LOCAL_AI_HUB_PYTHON:-python3}" -m hub.api "$@"

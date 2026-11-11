@@ -1,0 +1,229 @@
+# Local AI Hub
+
+**A local, extensible AI automation platform for macOS.** Firefox Nightly is its
+first interface — not its purpose.
+
+Local AI Hub runs AI models, local scripts and custom automation tasks on your
+own machine, without cloud services. The browser detects pages, extracts data,
+submits *tasks* and applies the results. Everything else — routing, plugins,
+model lifecycle — happens in a local engine that any other program can use too.
+
+> It is **not** a comment moderation extension. The comment classifier and the
+> image tagger are simply the first two applications.
+
+---
+
+## What's in the box
+
+```
+local-ai-hub/
+├── extension/          Firefox WebExtension (MV2): interface + bridge
+├── native/             Native Messaging host (stdio ⇄ Firefox)
+├── hub/                Core engine: router, plugins, models, domains, API
+├── plugins/            Independent capability programs (Python / JavaScript)
+├── sdk/                Plugin SDKs: sdk/python, sdk/js
+├── config/             hub.json + per-domain configurations
+├── scripts/            installer helpers, CLI, doctor, smoke test, packaging
+├── templates/          Skeleton for writing your own plugin
+├── examples/           Sample inputs and non-Firefox clients
+├── tests/              45 unit tests + 12 extension logic tests
+└── docs/               Architecture, protocol, plugin API, security, install
+```
+
+## Architecture
+
+```
+┌────────────────────────── Firefox Nightly ──────────────────────────┐
+│  content script            background page              options UI  │
+│  extract ▸ apply  ◂─────▸  native port + router  ◂─────▸  config    │
+└──────────────────────────────────┬──────────────────────────────────┘
+                    native messaging (4-byte length + JSON)
+┌──────────────────────────────────┴──────────────────────────────────┐
+│  native/local_ai_hub_host.py                                        │
+│  ┌──────────────────────── hub.Engine ─────────────────────────┐    │
+│  │  universal task router                                      │    │
+│  │   ├── PluginManager   manifests, discovery, validation      │    │
+│  │   ├── DomainRegistry  per-site selectors + options          │    │
+│  │   ├── run_plugin()    python / node subprocess, stdio RPC   │    │
+│  │   └── ModelManager    Ollama start ▸ load ▸ idle-unload     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│         ↕ stdin/stdout JSON RPC              ↕ HTTP 127.0.0.1:11434  │
+│   plugins/*.py, *.js                          Ollama (local models)  │
+└─────────────────────────────────────────────────────────────────────┘
+        ↑ same protocol, other interfaces: CLI, HTTP API, your own code
+```
+
+Firefox never needs to know how a plugin works or which model it uses.
+
+## Quick start (macOS, Apple Silicon)
+
+```bash
+unzip local-ai-hub.zip && cd local-ai-hub
+
+./install.sh                     # registers the native host, checks deps, smoke-tests
+ollama pull qwen3.5:4b           # or any model you prefer (see note below)
+```
+
+Then in **Firefox Nightly**:
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. **Load Temporary Add-on…** → select `extension/manifest.json`
+3. Click the toolbar button — it should say **connected**
+4. Open **Settings → Domains** to configure a site (or edit `config/domains/*.json`)
+5. On a configured page press **Alt+Shift+L** to run, **Alt+Shift+H** for the panel
+
+**No model yet?** Everything except real inference works offline:
+
+```bash
+./install.sh --mock              # mock model backend
+./bin/laihub --mock task comments.classify --domain example-board.com \
+    --input @examples/comments.json
+```
+
+> **Model name:** the starter config asks for `qwen3.5:4b`. If that tag is not
+> available on your Ollama install, set one you actually have —
+> `./install.sh --model qwen3:4b`, or edit `ollama.default_model` in
+> `config/hub.json`. The engine also tries `model_fallbacks` automatically and
+> tells you the exact `ollama pull` command when nothing matches.
+
+## Command line (no Firefox involved)
+
+```bash
+./bin/laihub status
+./bin/laihub plugins
+./bin/laihub domain example-board.com
+./bin/laihub task hello.python --input '{"name":"M1 Pro"}'
+./bin/laihub task hello.javascript --input '{"name":"Nightly","use_llm":true}'
+./bin/laihub task images.tag --input @examples/images.json
+./bin/laihub --mock --events task comments.classify --input @examples/comments.json
+```
+
+## The four bundled plugins
+
+| Plugin              | Runtime | Purpose                                            |
+| ------------------- | ------- | -------------------------------------------------- |
+| `comments.classify` | Python  | Contextual comment classification, batched, JSON    |
+| `images.tag`        | Python  | Vision descriptions + normalized tags               |
+| `hello.python`      | Python  | Reference plugin: runtime, config, logging, LLM     |
+| `hello.javascript`  | Node.js | Same contract in JavaScript                         |
+
+Add a capability by dropping a folder into `plugins/` — **no core changes**:
+
+```bash
+cp -r templates/plugin-template plugins/my.thing
+$EDITOR plugins/my.thing/manifest.json plugins/my.thing/plugin.py
+./bin/laihub plugins          # it is discovered immediately
+```
+
+## Per-domain configuration
+
+```json
+{
+  "domain": "example-board.com",
+  "features": {
+    "comments.classify": {
+      "enabled": true,
+      "root_selector": "div.comments",
+      "item_selector": "p.comment",
+      "fields": { "text": { "attr": "text" }, "author": { "selector": ".author" } },
+      "input": { "comments": "@items", "page_title": "@page.title" },
+      "options": { "labels": ["ok", "spam", "toxic", "off-topic"] },
+      "apply": {
+        "results_path": "results",
+        "match_by": "id",
+        "actions": [
+          { "action": "badge", "text": "{label} {confidence}" },
+          { "action": "class", "map": { "spam": "lah-flag-spam" } },
+          { "action": "hide", "when": { "field": "label", "in": ["spam"] } }
+        ]
+      }
+    },
+    "images.tag": {
+      "enabled": true,
+      "item_selector": "img.original",
+      "fields": { "data_base64": { "attr": "src", "as": "image", "max_size": 768 } },
+      "input": { "images": "@items" }
+    }
+  }
+}
+```
+
+Multiple capabilities coexist on one site, each with its own selectors,
+instructions and options. Configs live in `config/domains/*.json` (files) and can
+be overridden per-site from the extension's Settings UI. See
+[docs/DOMAIN_CONFIG.md](docs/DOMAIN_CONFIG.md).
+
+## Model runtime lifecycle
+
+* Ollama is started **on demand** (`ollama serve`) only when a task needs it
+* models load on first use, with `keep_alive` (default `5m`)
+* idle models are unloaded automatically (default 300 s) to free unified memory
+* `stop_on_exit` can shut down a server the hub started itself
+* structured JSON output is enforced with a schema, not by hoping the model behaves
+* per-plugin model requests: a plugin may ask for a different text/vision model
+
+## Security model
+
+* Plugins are **trusted local programs** you install.
+* The platform **never** executes commands or code supplied by webpages or by
+  LLM responses. There is no `eval`, no shell interpolation, no dynamic imports
+  of remote code.
+* Model output can only reach the page through an **allowlisted applier**:
+  text badges, CSS classes, `data-*`/`title`/`aria-label` attributes, hide/show.
+  Never `innerHTML`. Text replacement is opt-in per feature.
+* Plugins receive pixels, not URLs: the extension fetches and downscales images,
+  so plugins perform no network I/O.
+* The optional HTTP API binds to `127.0.0.1`, requires a bearer token and sends
+  no CORS headers — a webpage cannot drive it.
+
+Details: [docs/SECURITY.md](docs/SECURITY.md).
+
+## Testing
+
+```bash
+make test        # 45 Python unit tests + 12 extension logic tests
+make smoke       # 15 end-to-end checks over the real native messaging pipe
+make doctor      # diagnose an installation
+```
+
+The smoke test spawns `bin/local-ai-hub-host` exactly as Firefox does and speaks
+the framed protocol, using the offline mock backend — no model download needed.
+
+## Development status
+
+| Feature                                | Status                 |
+| -------------------------------------- | ---------------------- |
+| Firefox extension                      | Implemented            |
+| Native Messaging                       | Implemented            |
+| Automatic native-host startup          | Implemented            |
+| Ollama lifecycle management            | Implemented            |
+| Universal task protocol                | Implemented            |
+| Python plugins                         | Implemented            |
+| JavaScript plugins                     | Implemented            |
+| Domain-specific configurations         | Implemented            |
+| Comment classifier                     | Initial implementation |
+| Image tagger                           | Initial implementation |
+| Generic selector-driven tasks          | Implemented            |
+| CLI + experimental local HTTP API      | Implemented            |
+| Tampermonkey integration               | Not implemented        |
+| Actual imageboard integration          | Pending (needs your selectors) |
+| Persistent signed Firefox installation | Pending                |
+
+Validated here: syntax, unit tests, extension logic tests, and end-to-end
+protocol/plugin/model-mock execution. **Not yet validated against your real
+imageboard or your Firefox/Ollama installation** — run `make doctor` and
+`./bin/laihub status` there, then adjust selectors.
+
+## Documentation
+
+* [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components and data flow
+* [docs/PROTOCOL.md](docs/PROTOCOL.md) — universal task protocol + plugin RPC
+* [docs/PLUGIN_API.md](docs/PLUGIN_API.md) — manifests, SDKs, writing plugins
+* [docs/DOMAIN_CONFIG.md](docs/DOMAIN_CONFIG.md) — selectors, mapping, actions
+* [docs/INSTALL_MACOS.md](docs/INSTALL_MACOS.md) — install, signing, troubleshooting
+* [docs/SECURITY.md](docs/SECURITY.md) — trust boundaries
+* [docs/ROADMAP.md](docs/ROADMAP.md) — Tampermonkey bridge, API, packaging
+
+## License
+
+MIT — see [LICENSE](LICENSE).

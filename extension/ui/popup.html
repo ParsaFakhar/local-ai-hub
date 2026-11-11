@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Local AI Hub</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>body { width: 340px; }</style>
+  </head>
+  <body>
+    <header class="app">
+      <span class="dot" id="dot"></span>
+      <div>
+        <h1>Local AI Hub</h1>
+        <div class="sub" id="subtitle">checking…</div>
+      </div>
+      <span class="spacer"></span>
+      <button id="settings" title="Open settings">⚙</button>
+    </header>
+
+    <div class="notice err hidden" id="offline">
+      Native host not reachable. Install it with
+      <code>./install.sh</code> from the project folder, then reload Firefox.
+      <div class="small mono" id="offline-reason" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Runtime</h2>
+      <div class="row"><span class="k">Host</span><span class="v" id="host">—</span></div>
+      <div class="row"><span class="k">Ollama</span><span class="v" id="ollama">—</span></div>
+      <div class="row"><span class="k">Model</span><span class="v" id="model">—</span></div>
+      <div class="row"><span class="k">Loaded</span><span class="v" id="loaded">—</span></div>
+      <div class="row"><span class="k">Plugins</span><span class="v" id="plugins">—</span></div>
+      <div class="row"><span class="k">This site</span><span class="v" id="site">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Actions</h2>
+      <div class="actions">
+        <button class="primary" id="run">Run on this page</button>
+        <button id="ping">Ping</button>
+        <button id="unload">Unload models</button>
+        <button id="refresh">Refresh</button>
+      </div>
+      <pre class="output hidden" id="output"></pre>
+    </div>
+
+    <script src="../lib/protocol.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

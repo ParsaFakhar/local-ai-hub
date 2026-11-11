@@ -1,0 +1,13 @@
+#!/bin/sh
+# Local AI Hub native messaging entry point.
+# Firefox executes this wrapper; it must be an absolute, executable path in
+# ~/Library/Application Support/Mozilla/NativeMessagingHosts/local_ai_hub.json
+set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+LOCAL_AI_HUB_HOME="$ROOT"
+export LOCAL_AI_HUB_HOME
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+PYTHON=${LOCAL_AI_HUB_PYTHON:-python3}
+exec "$PYTHON" "$ROOT/native/local_ai_hub_host.py" "$@"

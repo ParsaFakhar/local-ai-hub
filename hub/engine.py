@@ -1,0 +1,281 @@
+"""The core engine: universal task router.
+
+Interfaces (Firefox native host, CLI, HTTP API) call :meth:`Engine.handle`
+with a protocol envelope and get a result envelope back.  The engine is the
+only component that knows about plugins *and* models.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from typing import Any, Callable
+
+from . import PROTOCOL_VERSION, __version__, protocol, schema
+from .config import Config, deep_merge, load_config
+from .domains import DomainRegistry, normalize_domain
+from .logging_util import get_logger, setup_logging
+from .models import ModelError, ModelManager
+from .plugins import PluginManager
+from .runtime import PluginRuntimeError, run_plugin
+
+log = get_logger("engine")
+
+Emit = Callable[[dict], None]
+
+
+class Engine:
+    def __init__(self, config: Config | None = None, emit: Emit | None = None):
+        self.config = config or load_config()
+        self.logger = setup_logging(self.config)
+        self.emit = emit
+        self.plugins = PluginManager(self.config)
+        self.domains = DomainRegistry(self.config)
+        self.models = ModelManager(self.config, on_event=self._runtime_event)
+        self.started_at = time.time()
+        self.task_count = 0
+        self.error_count = 0
+
+    # ------------------------------------------------------------------
+    def _runtime_event(self, name: str, data: dict) -> None:
+        if self.emit:
+            self.emit(protocol.make_event(name, data))
+
+    def _task_event(self, request_id: str, name: str, data: dict) -> None:
+        if self.emit:
+            self.emit(protocol.make_event(name, data, request_id))
+
+    # ------------------------------------------------------------------
+    def handle(self, message: Any) -> dict:
+        try:
+            request = protocol.validate_request(message)
+        except protocol.ProtocolError as exc:
+            request_id = message.get("id") if isinstance(message, dict) else None
+            return protocol.make_error(request_id or "-", protocol.ErrorCode.BAD_REQUEST, str(exc))
+
+        request_id = request["id"]
+        kind = request["type"]
+        started = time.monotonic()
+        try:
+            if kind == "task":
+                return self._handle_task(request)
+            handler = getattr(self, f"_handle_{kind.replace('.', '_')}", None)
+            if handler is None:
+                return protocol.make_error(
+                    request_id, protocol.ErrorCode.UNKNOWN_TYPE, f"unknown message type {kind!r}"
+                )
+            output = handler(request)
+            return protocol.make_result(
+                request_id, output, {"duration_ms": int((time.monotonic() - started) * 1000)}
+            )
+        except Exception as exc:  # noqa: BLE001 - the host must survive any failure
+            self.error_count += 1
+            log.exception("error handling %s (%s)", kind, request_id)
+            return protocol.make_error(
+                request_id, protocol.ErrorCode.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"
+            )
+
+    # ------------------------------------------------------------------
+    # Control handlers
+    # ------------------------------------------------------------------
+    def _handle_ping(self, request: dict) -> dict:
+        return {
+            "pong": True,
+            "app": "Local AI Hub",
+            "version": __version__,
+            "protocol": PROTOCOL_VERSION,
+            "time_ms": protocol.now_ms(),
+            "echo": request.get("input"),
+        }
+
+    def _handle_status(self, request: dict) -> dict:
+        return {
+            "app": "Local AI Hub",
+            "version": __version__,
+            "protocol": PROTOCOL_VERSION,
+            "uptime_seconds": int(time.time() - self.started_at),
+            "plugins": {"count": len(self.plugins.list()), "errors": self.plugins.errors},
+            "domains": {"count": len(self.domains.list_domains())},
+            "tasks": {"completed": self.task_count, "failed": self.error_count},
+            "models": self.models.status(),
+            "config_sources": self.config.sources,
+        }
+
+    def _handle_plugins_list(self, request: dict) -> dict:
+        return {"plugins": self.plugins.summaries(), "errors": self.plugins.errors}
+
+    def _handle_domains_list(self, request: dict) -> dict:
+        return {"domains": self.domains.list_domains()}
+
+    def _handle_domains_get(self, request: dict) -> dict:
+        domain = normalize_domain(
+            request.get("domain") or (request.get("context") or {}).get("domain")
+        )
+        overrides = request.get("overrides") if isinstance(request.get("overrides"), dict) else None
+        config = self.domains.get(domain, overrides)
+        config["available_plugins"] = [plugin.id for plugin in self.plugins.list()]
+        return config
+
+    def _handle_models_list(self, request: dict) -> dict:
+        return self.models.status()
+
+    def _handle_models_unload(self, request: dict) -> dict:
+        return {"unloaded": self.models.unload_all()}
+
+    def _handle_config_get(self, request: dict) -> dict:
+        data = self.config.as_dict()
+        return {"config": data, "sources": self.config.sources}
+
+    def _handle_shutdown(self, request: dict) -> dict:
+        self.models.shutdown()
+        return {"shutdown": True}
+
+    # ------------------------------------------------------------------
+    # Task execution
+    # ------------------------------------------------------------------
+    def _resolve_plugin_config(self, plugin, request: dict) -> tuple[dict, dict | None]:
+        context = request.get("context") or {}
+        domain = normalize_domain(context.get("domain"))
+        overrides = context.get("domain_config") if isinstance(context.get("domain_config"), dict) else None
+        feature = self.domains.feature(domain, plugin.id, overrides) if domain else None
+
+        if feature is not None and feature.get("enabled") is False:
+            raise PluginRuntimeError(
+                protocol.ErrorCode.PLUGIN_DISABLED,
+                f"plugin {plugin.id} is disabled for {domain}",
+            )
+
+        merged = deep_merge(plugin.default_config, (feature or {}).get("options") or {})
+        merged = deep_merge(merged, request.get("options") or {})
+        return merged, feature
+
+    def _handle_task(self, request: dict) -> dict:
+        request_id = request["id"]
+        plugin_id = request["plugin"]
+        started = time.monotonic()
+
+        plugin = self.plugins.get(plugin_id)
+        if plugin is None:
+            return protocol.make_error(
+                request_id,
+                protocol.ErrorCode.UNKNOWN_PLUGIN,
+                f"unknown plugin {plugin_id!r}",
+                {"available": [p.id for p in self.plugins.list()]},
+            )
+
+        raw_input = request.get("input", {})
+        encoded_size = len(json.dumps(raw_input, ensure_ascii=False))
+        limit = int(self.config.get("security.max_input_bytes", 4 * 1024 * 1024))
+        if encoded_size > limit:
+            return protocol.make_error(
+                request_id,
+                protocol.ErrorCode.INPUT_TOO_LARGE,
+                f"input is {encoded_size} bytes, limit is {limit}; reduce the batch size",
+            )
+
+        try:
+            plugin_config, feature = self._resolve_plugin_config(plugin, request)
+        except PluginRuntimeError as exc:
+            return protocol.make_error(request_id, exc.code, exc.message, exc.details)
+
+        payload_input = schema.apply_defaults(raw_input, plugin.input_schema)
+        errors = schema.validate(payload_input, plugin.input_schema)
+        if errors:
+            return protocol.make_error(
+                request_id, protocol.ErrorCode.INVALID_INPUT, "input does not match the plugin schema", errors
+            )
+
+        context = request.get("context") or {}
+        payload = {
+            "type": "invoke",
+            "protocol": PROTOCOL_VERSION,
+            "task_id": request_id,
+            "plugin": {"id": plugin.id, "version": plugin.version, "dir": str(plugin.directory)},
+            "input": payload_input,
+            "config": plugin_config,
+            "context": {
+                "domain": normalize_domain(context.get("domain")),
+                "url": context.get("url"),
+                "title": context.get("title"),
+                "interface": context.get("interface", "unknown"),
+                "tab_id": context.get("tab_id"),
+            },
+            "models": {
+                "default": self.models.default_model,
+                "vision": self.models.vision_model,
+                "requested": plugin.models,
+            },
+            "limits": {
+                "max_llm_calls": int(self.config.get("plugins.max_llm_calls", 64)),
+                "timeout_seconds": plugin.timeout_seconds
+                or self.config.get("plugins.timeout_seconds", 180),
+            },
+        }
+
+        used_models: list[str] = []
+
+        def llm_handler(method: str, params: dict) -> dict:
+            if method not in ("generate", "chat"):
+                raise ModelError(f"unsupported model method {method!r}")
+            if method == "generate":
+                result = self.models.generate(
+                    params.get("prompt", ""),
+                    model=params.get("model"),
+                    system=params.get("system"),
+                    images=params.get("images"),
+                    fmt=params.get("format"),
+                    options=params.get("options"),
+                )
+            else:
+                result = self.models.chat(
+                    params.get("messages") or [],
+                    model=params.get("model"),
+                    fmt=params.get("format"),
+                    options=params.get("options"),
+                )
+            if result.get("model") and result["model"] not in used_models:
+                used_models.append(result["model"])
+            return result
+
+        self._task_event(request_id, "task.started", {"plugin": plugin.id})
+        log.info("task %s -> %s (%s)", request_id, plugin.id, payload["context"]["domain"] or "no domain")
+
+        try:
+            output = run_plugin(
+                plugin,
+                payload,
+                config=self.config,
+                llm_handler=llm_handler,
+                on_event=lambda name, data: self._task_event(request_id, name, data),
+            )
+        except PluginRuntimeError as exc:
+            self.error_count += 1
+            log.warning("task %s failed: %s", request_id, exc.message)
+            self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": exc.message})
+            return protocol.make_error(request_id, exc.code, exc.message, exc.details)
+        except ModelError as exc:
+            self.error_count += 1
+            return protocol.make_error(request_id, exc.code, str(exc))
+
+        output_errors = schema.validate(output, plugin.output_schema)
+        if output_errors:
+            log.warning("plugin %s output violates its schema: %s", plugin.id, output_errors)
+
+        self.task_count += 1
+        duration_ms = int((time.monotonic() - started) * 1000)
+        meta = {
+            "plugin": plugin.id,
+            "plugin_version": plugin.version,
+            "models": used_models,
+            "mock_model": self.models.mock,
+            "duration_ms": duration_ms,
+            "domain": payload["context"]["domain"],
+            "output_schema_errors": output_errors,
+        }
+        self._task_event(request_id, "task.finished", {"plugin": plugin.id, "duration_ms": duration_ms})
+        log.info("task %s done in %d ms", request_id, duration_ms)
+        return protocol.make_result(request_id, output, meta)
+
+    # ------------------------------------------------------------------
+    def shutdown(self) -> None:
+        self.models.shutdown()
