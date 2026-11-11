@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .. import paths
+from .. import capabilities, paths
 from ..logging_util import get_logger
 
 log = get_logger("plugins")
@@ -152,6 +152,13 @@ class PluginManager:
                         {"directory": str(directory), "error": f"duplicate plugin id {plugin.id}"}
                     )
                     continue
+                unknown_capabilities = capabilities.unknown(plugin.capabilities)
+                if unknown_capabilities:
+                    log.warning(
+                        "plugin %s declares unknown capabilities: %s (ignored by this engine)",
+                        plugin.id,
+                        ", ".join(unknown_capabilities),
+                    )
                 plugins[plugin.id] = plugin
 
         self._plugins = plugins

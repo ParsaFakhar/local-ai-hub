@@ -121,14 +121,23 @@ def run_plugin(
     llm_handler,
     on_event=None,
     timeout: float | None = None,
+    cancel_event=None,
 ) -> dict:
-    """Run one plugin invocation and return its ``output`` dict."""
+    """Run one plugin invocation and return its ``output`` dict.
+
+    ``cancel_event`` is an optional :class:`threading.Event`; when it is set the
+    child is terminated and a ``task_cancelled`` error is raised.
+    """
     command = _interpreter(plugin, config)
     env = _child_env(plugin)
     timeout = float(timeout or plugin.timeout_seconds or config.get("plugins.timeout_seconds", 180))
     max_output = int(config.get("plugins.max_output_bytes", 8 * 1024 * 1024))
     max_llm_calls = int(config.get("plugins.max_llm_calls", 64))
     task_id = payload.get("task_id", "-")
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise PluginRuntimeError("task_cancelled", f"task {task_id} was cancelled before it started")
+
 
     log.debug("exec %s (cwd=%s)", " ".join(command), plugin.directory)
     try:
@@ -172,6 +181,10 @@ def run_plugin(
     try:
         while True:
             remaining = deadline - time.monotonic()
+            if cancel_event is not None and cancel_event.is_set():
+                raise PluginRuntimeError(
+                    "task_cancelled", f"task {task_id} was cancelled by the caller"
+                )
             if remaining <= 0:
                 raise PluginRuntimeError(
                     "plugin_timeout", f"plugin {plugin.id} exceeded {timeout:.0f}s"
@@ -216,6 +229,10 @@ def run_plugin(
                                 },
                             )
                     elif kind == "llm.request":
+                        if cancel_event is not None and cancel_event.is_set():
+                            raise PluginRuntimeError(
+                                "task_cancelled", f"task {task_id} was cancelled by the caller"
+                            )
                         llm_calls += 1
                         if llm_calls > max_llm_calls:
                             send(

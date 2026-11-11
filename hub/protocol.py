@@ -25,7 +25,8 @@ Event (unsolicited, may arrive before the result)::
     {"protocol":"1.0","type":"event","event":"progress","id":"req-1","data":{...}}
 
 Control types: ``ping``, ``status``, ``plugins.list``, ``domains.get``,
-``domains.list``, ``models.list``, ``models.unload``, ``config.get``, ``shutdown``.
+``domains.list``, ``models.list``, ``models.unload``, ``config.get``,
+``tasks.list``, ``task.cancel``, ``cache.clear``, ``shutdown``.
 """
 
 from __future__ import annotations
@@ -51,7 +52,20 @@ CONTROL_TYPES = {
     "models.list",
     "models.unload",
     "config.get",
+    "tasks.list",
+    "task.cancel",
+    "cache.clear",
     "shutdown",
+}
+
+#: Control types that must stay responsive while a long task is running.
+#: The native host handles these inline instead of queueing them behind tasks.
+INLINE_CONTROL_TYPES = {
+    "ping",
+    "status",
+    "shutdown",
+    "task.cancel",
+    "tasks.list",
 }
 
 
@@ -68,6 +82,21 @@ class ErrorCode:
     MODEL_ERROR = "model_error"
     MODEL_UNAVAILABLE = "model_unavailable"
     INTERNAL_ERROR = "internal_error"
+    CAPABILITY_DENIED = "capability_denied"
+    TASK_CANCELLED = "task_cancelled"
+    UNKNOWN_TASK = "unknown_task"
+    MESSAGE_TOO_LARGE = "message_too_large"
+    UNAUTHORIZED = "unauthorized"
+    FORBIDDEN = "forbidden"
+    NOT_FOUND = "not_found"
+    RATE_LIMITED = "rate_limited"
+
+
+#: Interfaces that relay requests originating inside a webpage.  These are the
+#: ones ``security.allow_page_supplied_config`` governs: they may submit input,
+#: never configuration.  Local interfaces (firefox background, cli, http, your
+#: own Python program) are trusted because they are the user's own programs.
+PAGE_INTERFACES = {"tampermonkey", "userscript", "page", "web"}
 
 
 def new_id(prefix: str = "task") -> str:

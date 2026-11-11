@@ -53,7 +53,7 @@ class NativeHost:
             log.error("dropping oversized message: %s", exc)
             if message.get("id"):
                 fallback = protocol.make_error(
-                    message["id"], "message_too_large", str(exc)
+                    message["id"], protocol.ErrorCode.MESSAGE_TOO_LARGE, str(exc)
                 )
                 frame = protocol.encode_native_message(fallback)
             else:
@@ -120,8 +120,9 @@ class NativeHost:
                     log.info("stdin closed by Firefox; shutting down")
                     break
                 kind = message.get("type") if isinstance(message, dict) else None
-                if kind in ("ping", "status", "shutdown"):
+                if kind in protocol.INLINE_CONTROL_TYPES:
                     # control messages stay responsive even during a long task
+                    # (task.cancel in particular must not queue behind its own task)
                     self._process(message)
                 else:
                     tasks.put(message)

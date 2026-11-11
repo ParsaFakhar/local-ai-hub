@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .protocol import PAGE_INTERFACES
 
 DEFAULTS: dict[str, Any] = {
     "log": {
@@ -62,10 +63,25 @@ DEFAULTS: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 8765,
         "token_file": "api-token",
+        "allowed_origins": [],
+        "allow_token_query": True,
+        "sse_keepalive_seconds": 15,
+    },
+    "tasks": {
+        "history_size": 100,
+        "audit_log": True,
+        "audit_file": "tasks.jsonl",
+    },
+    "cache": {
+        "enabled": False,
+        "ttl_seconds": 900,
+        "max_entries": 256,
     },
     "security": {
         "max_input_bytes": 4 * 1024 * 1024,
         "allow_page_supplied_config": False,
+        "enforce_capabilities": True,
+        "page_interfaces": sorted(PAGE_INTERFACES),
     },
 }
 
