@@ -1,1 +1,111 @@
-{"manifest_version": 2, "name": "Local AI Hub", "version": "0.1.0", "description": "Local, extensible AI automation platform. Runs plugins and local models through a native messaging host — no cloud services.", "browser_specific_settings": {"gecko": {"id": "local-ai-hub@localaihub.dev", "strict_min_version": "115.0"}}, "permissions": ["nativeMessaging", "storage", "tabs", "activeTab", "<all_urls>"], "background": {"scripts": ["lib/protocol.js", "background.js"], "persistent": true}, "content_scripts": [{"matches": ["<all_urls>"], "js": ["lib/protocol.js", "content/extractors.js", "content/appliers.js", "content/content.js"], "css": ["content/content.css"], "run_at": "document_idle", "all_frames": false}], "browser_action": {"default_title": "Local AI Hub", "default_popup": "ui/popup.html", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png"}}, "options_ui": {"page": "ui/options.html", "open_in_tab": true}, "commands": {"lah-run-all": {"suggested_key": {"default": "Alt+Shift+L"}, "description": "Run all enabled Local AI Hub features on this page"}, "lah-toggle-panel": {"suggested_key": {"default": "Alt+Shift+H"}, "description": "Show or hide the Local AI Hub panel"}}, "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "96": "icons/icon-96.png", "128": "icons/icon-128.png"}, "web_accessible_resources": []}
+{
+  "manifest_version": 2,
+  "name": "Local AI Hub",
+  "version": "0.1.0",
+  "description": "Local, extensible AI automation platform. Runs plugins and local models through a native messaging host \u2014 no cloud services.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "local-ai-hub@localaihub.dev",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "storage",
+    "menus",
+    "tabs",
+    "activeTab",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "lib/protocol.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "lib/protocol.js",
+        "content/extractors.js",
+        "content/appliers.js",
+        "content/bridge.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "browser_action": {
+    "default_title": "Local AI Hub",
+    "default_popup": "ui/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "ui/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "lah-run-all": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Run all enabled Local AI Hub features on this page"
+    },
+    "lah-toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+H"
+      },
+      "description": "Show or hide the Local AI Hub panel"
+    },
+    "lah-dry-run": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Toggle dry-run mode (plan changes without applying them)"
+    },
+    "lah-pick-selector": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Pick an element to build a selector for this site"
+    },
+    "lah-run-feature-1": {
+      "suggested_key": {
+        "default": "Alt+Shift+1"
+      },
+      "description": "Run enabled feature #1 on this page"
+    },
+    "lah-run-feature-2": {
+      "suggested_key": {
+        "default": "Alt+Shift+2"
+      },
+      "description": "Run enabled feature #2 on this page"
+    },
+    "lah-run-feature-3": {
+      "suggested_key": {
+        "default": "Alt+Shift+3"
+      },
+      "description": "Run enabled feature #3 on this page"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "web_accessible_resources": []
+}

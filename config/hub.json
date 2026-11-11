@@ -1,1 +1,87 @@
-{"log": {"level": "info"}, "plugins": {"paths": ["plugins"], "disabled": [], "timeout_seconds": 180}, "runtime": {"python": "python3", "node": "node"}, "ollama": {"binary": "auto", "host": "127.0.0.1", "port": 11434, "auto_start": true, "stop_on_exit": false, "keep_alive": "5m", "idle_unload_seconds": 300, "default_model": "qwen3.5:4b", "vision_model": "qwen3.5:4b", "model_fallbacks": ["qwen3:4b", "qwen2.5:4b", "llama3.2:3b"], "num_ctx": 8192, "temperature": 0.1, "mock": false}, "domains": {"paths": ["domains"], "allow_extension_overrides": true}, "api": {"enabled": false, "host": "127.0.0.1", "port": 8765}, "security": {"max_input_bytes": 4194304, "allow_page_supplied_config": false}}
+{
+  "log": {
+    "level": "info",
+    "file": "hub.log",
+    "max_bytes": 1048576,
+    "backups": 3
+  },
+  "plugins": {
+    "paths": [
+      "plugins"
+    ],
+    "disabled": [],
+    "timeout_seconds": 180,
+    "max_llm_calls": 64,
+    "max_output_bytes": 8388608
+  },
+  "runtime": {
+    "python": "python3",
+    "node": "node"
+  },
+  "ollama": {
+    "binary": "auto",
+    "host": "127.0.0.1",
+    "port": 11434,
+    "auto_start": true,
+    "stop_on_exit": false,
+    "startup_timeout_seconds": 45,
+    "request_timeout_seconds": 240,
+    "keep_alive": "5m",
+    "idle_unload_seconds": 300,
+    "default_model": "qwen3.5:4b",
+    "vision_model": "qwen3.5:4b",
+    "model_fallbacks": [
+      "qwen3:4b",
+      "qwen2.5:4b",
+      "llama3.2:3b"
+    ],
+    "num_ctx": 8192,
+    "temperature": 0.1,
+    "stream": false,
+    "mock": false
+  },
+  "domains": {
+    "paths": [
+      "domains"
+    ],
+    "allow_extension_overrides": true
+  },
+  "tasks": {
+    "history_size": 100,
+    "audit_log": true,
+    "audit_file": "tasks.jsonl"
+  },
+  "cache": {
+    "enabled": false,
+    "ttl_seconds": 900,
+    "max_entries": 256
+  },
+  "api": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "token_file": "api-token",
+    "allowed_origins": [],
+    "allow_token_query": true,
+    "sse_keepalive_seconds": 15,
+    "unix_socket": ""
+  },
+  "bridge": {
+    "enabled": true,
+    "require_domain_opt_in": true,
+    "allow_apply": true,
+    "max_requests_per_minute": 30,
+    "max_input_bytes": 262144
+  },
+  "security": {
+    "max_input_bytes": 4194304,
+    "allow_page_supplied_config": false,
+    "enforce_capabilities": true,
+    "page_interfaces": [
+      "page",
+      "tampermonkey",
+      "userscript",
+      "web"
+    ]
+  }
+}

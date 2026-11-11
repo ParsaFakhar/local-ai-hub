@@ -1,1 +1,123 @@
-{"domain": "example-board.com", "label": "Example imageboard", "features": {"comments.classify": {"enabled": true, "auto_run": false, "root_selector": "div.comments", "item_selector": "p.comment", "fields": {"text": {"attr": "text"}, "author": {"selector": ".author", "attr": "text"}}, "input": {"comments": "@items", "page_title": "@page.title"}, "options": {"labels": ["ok", "spam", "toxic", "off-topic"], "batch_size": 8, "instructions": "Classify posts in the context of an imageboard thread. 'spam' = advertising or link farming, 'toxic' = harassment or slurs, 'off-topic' = unrelated to the thread subject."}, "apply": {"results_path": "results", "match_by": "id", "actions": [{"action": "badge", "text": "{label} {confidence}"}, {"action": "attribute", "name": "data-lah-label", "value": "{label}"}, {"action": "class", "map": {"spam": "lah-flag-spam", "toxic": "lah-flag-toxic", "off-topic": "lah-flag-offtopic"}}, {"action": "hide", "when": {"field": "label", "in": ["spam"]}}]}}, "images.tag": {"enabled": true, "auto_run": false, "item_selector": "img.original", "fields": {"data_base64": {"attr": "src", "as": "image", "max_size": 768, "quality": 0.85}, "alt": {"attr": "alt"}, "filename": {"attr": "src", "transform": "basename"}}, "input": {"images": "@items"}, "options": {"max_tags": 8}, "apply": {"results_path": "results", "match_by": "id", "actions": [{"action": "badge", "text": "{tags}"}, {"action": "attribute", "name": "data-lah-tags", "value": "{tags}"}, {"action": "attribute", "name": "title", "value": "{description}"}]}}}}
+{
+  "domain": "example-board.com",
+  "label": "Example imageboard",
+  "features": {
+    "comments.classify": {
+      "enabled": true,
+      "auto_run": false,
+      "root_selector": "div.comments",
+      "item_selector": "p.comment",
+      "fields": {
+        "text": {
+          "attr": "text"
+        },
+        "author": {
+          "selector": ".author",
+          "attr": "text"
+        }
+      },
+      "input": {
+        "comments": "@items",
+        "page_title": "@page.title"
+      },
+      "options": {
+        "labels": [
+          "ok",
+          "spam",
+          "toxic",
+          "off-topic"
+        ],
+        "batch_size": 8,
+        "instructions": "Classify posts in the context of an imageboard thread. 'spam' = advertising or link farming, 'toxic' = harassment or slurs, 'off-topic' = unrelated to the thread subject."
+      },
+      "apply": {
+        "results_path": "results",
+        "match_by": "id",
+        "actions": [
+          {
+            "action": "badge",
+            "text": "{label} {confidence}"
+          },
+          {
+            "action": "attribute",
+            "name": "data-lah-label",
+            "value": "{label}"
+          },
+          {
+            "action": "class",
+            "map": {
+              "spam": "lah-flag-spam",
+              "toxic": "lah-flag-toxic",
+              "off-topic": "lah-flag-offtopic"
+            }
+          },
+          {
+            "action": "hide",
+            "when": {
+              "field": "label",
+              "in": [
+                "spam"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "images.tag": {
+      "enabled": true,
+      "auto_run": false,
+      "item_selector": "img.original",
+      "fields": {
+        "data_base64": {
+          "attr": "src",
+          "as": "image",
+          "max_size": 768,
+          "quality": 0.85
+        },
+        "alt": {
+          "attr": "alt"
+        },
+        "filename": {
+          "attr": "src",
+          "transform": "basename"
+        }
+      },
+      "input": {
+        "images": "@items"
+      },
+      "options": {
+        "max_tags": 8
+      },
+      "apply": {
+        "results_path": "results",
+        "match_by": "id",
+        "actions": [
+          {
+            "action": "badge",
+            "text": "{tags}"
+          },
+          {
+            "action": "attribute",
+            "name": "data-lah-tags",
+            "value": "{tags}"
+          },
+          {
+            "action": "attribute",
+            "name": "title",
+            "value": "{description}"
+          }
+        ]
+      }
+    }
+  },
+  "bridge": {
+    "tampermonkey": true,
+    "plugins": [
+      "comments.classify",
+      "images.tag",
+      "hello.python"
+    ],
+    "allow_apply": true,
+    "max_requests_per_minute": 30
+  }
+}

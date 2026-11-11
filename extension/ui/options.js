@@ -136,7 +136,86 @@ async function selectDomain(domain) {
     : 'No override yet — saving creates one on top of the host file config.';
   const config = await LAH.send(LAH.KIND.DOMAIN_CONFIG, { domain });
   $('effective').textContent = JSON.stringify(config, null, 2);
+  const policy = (config && config.bridge_policy) || {};
+  $('bridge-enabled').checked = Boolean((override && override.bridge && override.bridge.tampermonkey) || (config && config.bridge && config.bridge.tampermonkey));
+  $('bridge-apply').checked = Boolean((override && override.bridge && override.bridge.allow_apply) || (config && config.bridge && config.bridge.allow_apply));
+  $('bridge-policy').textContent = policy.enabled
+    ? `on · plugins: ${(policy.plugins || []).join(', ') || '(none enabled)'} · apply: ${policy.allow_apply ? 'yes' : 'no'} · ${policy.max_requests_per_minute}/min`
+    : 'off for this domain';
 }
+
+// ---------------------------------------------------------------------------
+// selector picker (results arrive from the content script)
+// ---------------------------------------------------------------------------
+async function loadPicker() {
+  const reply = await LAH.send(LAH.KIND.GET_PICK_RESULT, {});
+  const result = (reply && reply.result) || null;
+  state.picker = result;
+  $('picker-empty').classList.toggle('hidden', Boolean(result));
+  $('picker-body').classList.toggle('hidden', !result);
+  if (!result) return;
+  $('picker-selector').textContent = result.item_selector || '';
+  $('picker-matches').textContent = `${result.matches} on ${result.domain}`;
+  $('picker-sample').textContent = result.sample || '(no text)';
+  const select = $('picker-plugin');
+  select.textContent = '';
+  state.plugins.forEach((plugin) => {
+    const option = document.createElement('option');
+    option.value = plugin.id;
+    option.textContent = plugin.id;
+    select.appendChild(option);
+  });
+}
+
+$('picker-insert').addEventListener('click', async () => {
+  const result = state.picker;
+  const pluginId = $('picker-plugin').value;
+  if (!result || !pluginId) return;
+  if (state.current !== result.domain) await selectDomain(result.domain);
+  let parsed = {};
+  try {
+    parsed = JSON.parse($('domain-editor').value || '{}');
+  } catch (_) {
+    parsed = {};
+  }
+  parsed.features = parsed.features || {};
+  const feature = parsed.features[pluginId] || featureTemplate(pluginId);
+  feature.item_selector = result.item_selector;
+  if (result.root_selector) feature.root_selector = result.root_selector;
+  feature.fields = feature.fields && Object.keys(feature.fields).length ? feature.fields : { text: { attr: 'text' } };
+  parsed.features[pluginId] = feature;
+  $('domain-editor').value = JSON.stringify(parsed, null, 2);
+  $('editor-status').textContent = `Picker selector inserted into ${pluginId} — review, then Save.`;
+});
+
+$('picker-dismiss').addEventListener('click', async () => {
+  await LAH.send(LAH.KIND.PICK_RESULT, { result: null }).catch(() => {});
+  state.picker = null;
+  $('picker-empty').classList.remove('hidden');
+  $('picker-body').classList.add('hidden');
+});
+
+$('bridge-write').addEventListener('click', () => {
+  if (!state.current) return;
+  let parsed = {};
+  try {
+    parsed = JSON.parse($('domain-editor').value || '{}');
+  } catch (_) {
+    parsed = {};
+  }
+  const enabled = $('bridge-enabled').checked;
+  const features = parsed.features || {};
+  parsed.bridge = {
+    tampermonkey: enabled,
+    plugins: Object.keys(features).filter((id) => features[id] && features[id].enabled),
+    allow_apply: $('bridge-apply').checked,
+    max_requests_per_minute: 30,
+  };
+  $('domain-editor').value = JSON.stringify(parsed, null, 2);
+  $('editor-status').textContent = enabled
+    ? 'Bridge block written — Save, then reload the page. Only the listed plugins are reachable.'
+    : 'Bridge disabled in the override — Save to apply.';
+});
 
 $('add-domain').addEventListener('click', async () => {
   const raw = $('new-domain').value.trim().toLowerCase();
@@ -184,7 +263,7 @@ $('validate').addEventListener('click', () => {
   }
 });
 
-const LAHApplyAllowed = ['badge', 'class', 'attribute', 'hide', 'show', 'text'];
+const LAHApplyAllowed = ['badge', 'class', 'attribute', 'hide', 'show', 'text', 'fill'];
 
 $('reload-domain').addEventListener('click', () => state.current && selectDomain(state.current));
 
@@ -323,6 +402,8 @@ async function loadSettings() {
   $('set-showPanel').checked = Boolean(state.settings.showPanel);
   $('set-autoRun').checked = Boolean(state.settings.autoRun);
   $('set-debug').checked = Boolean(state.settings.debug);
+  $('set-dryRun').checked = Boolean(state.settings.dryRun);
+  $('set-review').checked = Boolean(state.settings.review);
   $('set-requestTimeout').value = Math.round((state.settings.requestTimeoutMs || 240000) / 1000);
   $('set-maxItems').value = state.settings.maxItems || 200;
   $('set-imageMaxSize').value = state.settings.imageMaxSize || 768;
@@ -335,6 +416,8 @@ $('save-settings').addEventListener('click', async () => {
     showPanel: $('set-showPanel').checked,
     autoRun: $('set-autoRun').checked,
     debug: $('set-debug').checked,
+    dryRun: $('set-dryRun').checked,
+    review: $('set-review').checked,
     requestTimeoutMs: Math.max(10, Number($('set-requestTimeout').value) || 240) * 1000,
     maxItems: Math.max(1, Number($('set-maxItems').value) || 200),
     imageMaxSize: Math.max(128, Number($('set-imageMaxSize').value) || 768),
@@ -399,4 +482,5 @@ browser.runtime.onMessage.addListener((message) => {
   await loadSettings();
   await loadPlugins();
   await loadDomains();
+  await loadPicker();
 })();

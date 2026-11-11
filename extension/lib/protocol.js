@@ -22,6 +22,8 @@
     COMMAND: 'hub.command',
     OPEN_OPTIONS: 'hub.openOptions',
     LOG: 'hub.log',
+    PICK_RESULT: 'hub.pickResult',
+    GET_PICK_RESULT: 'hub.getPickResult',
   };
 
   const DEFAULT_SETTINGS = {
@@ -32,6 +34,8 @@
     imageMaxSize: 768,
     imageQuality: 0.85,
     maxItems: 200,
+    dryRun: false,
+    review: false,
     debug: false,
   };
 

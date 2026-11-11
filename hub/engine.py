@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from . import PROTOCOL_VERSION, __version__, capabilities, protocol, schema
+from . import PROTOCOL_VERSION, __version__, bridge, capabilities, protocol, schema
 from .cache import ResultCache, cache_key
 from .config import Config, deep_merge, load_config
 from .domains import DomainRegistry, normalize_domain
@@ -25,6 +25,16 @@ from .tasks import TaskRegistry, input_hash
 log = get_logger("engine")
 
 Emit = Callable[[dict], None]
+
+
+def _is_error_envelope(value: Any) -> bool:
+    """True for a complete ``{"type": "result", "ok": false, ...}`` envelope."""
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "result"
+        and value.get("ok") is False
+        and isinstance(value.get("error"), dict)
+    )
 
 
 class Engine:
@@ -78,6 +88,12 @@ class Engine:
                     request_id, protocol.ErrorCode.UNKNOWN_TYPE, f"unknown message type {kind!r}"
                 )
             output = handler(request)
+            # A control handler may return a ready-made error envelope (bad
+            # arguments it validated itself).  Pass it through untouched instead
+            # of wrapping an error inside a successful result.
+            if _is_error_envelope(output):
+                self._bump(ok=False)
+                return output
             return protocol.make_result(
                 request_id, output, {"duration_ms": int((time.monotonic() - started) * 1000)}
             )
@@ -117,6 +133,15 @@ class Engine:
                 "allow_page_supplied_config": bool(
                     self.config.get("security.allow_page_supplied_config", False)
                 ),
+            },
+            "bridge": {
+                "enabled": bool(self.config.get("bridge.enabled", True)),
+                "require_domain_opt_in": bool(self.config.get("bridge.require_domain_opt_in", True)),
+                "domains": [
+                    entry["domain"]
+                    for entry in self.domains.list_domains()
+                    if bridge.policy(self.domains.get(entry["domain"]), self.config)["enabled"]
+                ],
             },
             "config_sources": self.config.sources,
         }
@@ -163,6 +188,9 @@ class Engine:
         overrides = request.get("overrides") if isinstance(request.get("overrides"), dict) else None
         config = self.domains.get(domain, overrides)
         config["available_plugins"] = [plugin.id for plugin in self.plugins.list()]
+        # Resolved userscript-bridge policy: the content script uses this instead
+        # of re-deriving the rules, so both sides always agree.
+        config["bridge_policy"] = bridge.policy(config, self.config)
         return config
 
     def _handle_models_list(self, request: dict) -> dict:
@@ -248,6 +276,21 @@ class Engine:
                 protocol.ErrorCode.INPUT_TOO_LARGE,
                 f"input is {encoded_size} bytes, limit is {limit}; reduce the batch size",
             )
+
+        # Page-facing interfaces (userscript bridge) need an explicit, locally
+        # configured opt-in for this domain *and* this plugin.  The policy is
+        # read from local config only — never from the request.
+        context = request.get("context") or {}
+        if self._is_page_interface(context.get("interface")) and self.config.get(
+            "bridge.require_domain_opt_in", True
+        ):
+            domain = normalize_domain(context.get("domain"))
+            resolved = bridge.policy(self.domains.get(domain), self.config)
+            rejected = bridge.denial(resolved, plugin_id, encoded_size)
+            if rejected:
+                code, message = rejected
+                log.warning("bridge denied %s for %s: %s", plugin_id, domain or "-", message)
+                return protocol.make_error(request_id, code, message)
 
         try:
             plugin_config, feature = self._resolve_plugin_config(plugin, request)

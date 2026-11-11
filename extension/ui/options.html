@@ -62,6 +62,37 @@
             </div>
           </div>
           <div class="card" style="margin:12px 0 0">
+            <h2>Selector picker</h2>
+            <div class="small muted" id="picker-empty">
+              Press <code>Alt+Shift+P</code> on a page (or use the panel's “Pick selector” button),
+              then click an element. The generated selector lands here.
+            </div>
+            <div id="picker-body" class="hidden">
+              <div class="row"><span class="k">Selector</span><span class="v mono" id="picker-selector"></span></div>
+              <div class="row"><span class="k">Matches</span><span class="v" id="picker-matches"></span></div>
+              <div class="row"><span class="k">Sample</span><span class="v small" id="picker-sample"></span></div>
+              <div class="row" style="margin-top:8px">
+                <span class="muted small">Insert into feature:</span>
+                <select id="picker-plugin"></select>
+                <button class="primary" id="picker-insert">Insert</button>
+                <button id="picker-dismiss">Dismiss</button>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin:12px 0 0">
+            <h2>Userscript bridge (Tampermonkey / Violentmonkey)</h2>
+            <div class="small muted">
+              Off by default. Opting a site in lets a userscript submit <em>input data</em> to the
+              plugins listed here — never configuration, selectors or code.
+            </div>
+            <div class="row" style="margin-top:8px">
+              <label><input type="checkbox" id="bridge-enabled" /> enable on this domain</label>
+              <label><input type="checkbox" id="bridge-apply" /> allow the page to apply results</label>
+              <button id="bridge-write">Write into override</button>
+            </div>
+            <div class="row"><span class="k">Effective policy</span><span class="v mono small" id="bridge-policy">—</span></div>
+          </div>
+          <div class="card" style="margin:12px 0 0">
             <h2>Effective configuration (host file + override)</h2>
             <pre class="output" id="effective">{}</pre>
           </div>
@@ -120,6 +151,16 @@
         <div class="field">
           <span class="label">Image JPEG quality</span>
           <input type="number" id="set-imageQuality" min="0.3" max="1" step="0.05" style="width:110px" />
+        </div>
+        <div class="field">
+          <span class="label">Dry run by default</span>
+          <label><input type="checkbox" id="set-dryRun" /> enabled</label>
+          <span class="hint">plan changes and preview them without touching the page (Alt+Shift+D)</span>
+        </div>
+        <div class="field">
+          <span class="label">Review results before applying</span>
+          <label><input type="checkbox" id="set-review" /> enabled</label>
+          <span class="hint">tick the items you accept, then apply</span>
         </div>
         <div class="field">
           <span class="label">Debug logging</span>

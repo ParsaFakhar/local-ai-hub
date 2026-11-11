@@ -263,7 +263,14 @@ async function domainConfig(domain) {
       logLine('error', `domains.get failed for ${domain}`, LAH.errorMessage(error));
     }
   }
-  const merged = overrides ? LAH.deepMerge(base, { features: overrides.features || {} }) : base;
+  let merged = base;
+  if (overrides) {
+    merged = LAH.deepMerge(base, { features: overrides.features || {} });
+    // The Settings UI may also opt a site into the userscript bridge.
+    if (overrides.bridge && typeof overrides.bridge === 'object') {
+      merged.bridge = LAH.deepMerge(base.bridge || {}, overrides.bridge);
+    }
+  }
   merged.domain = domain;
   merged.source = { file: Boolean(base.features && Object.keys(base.features).length), override: Boolean(overrides) };
   return merged;
@@ -345,10 +352,43 @@ browser.runtime.onMessage.addListener((message, sender) => {
         .catch((error) => ({ ok: false, error: LAH.errorMessage(error) }));
     case KIND.OPEN_OPTIONS:
       return browser.runtime.openOptionsPage().then(() => ({ ok: true }));
+    case KIND.PICK_RESULT:
+      return browser.storage.local
+        .set({ picker: message.result || null })
+        .then(() => browser.runtime.openOptionsPage())
+        .then(() => ({ ok: true }))
+        .catch((error) => ({ ok: false, error: LAH.errorMessage(error) }));
+    case KIND.GET_PICK_RESULT:
+      return browser.storage.local.get('picker').then((stored) => ({ result: stored.picker || null }));
     default:
       return undefined;
   }
 });
+
+// ---------------------------------------------------------------------------
+// context menu: "Send selection to Local AI Hub"
+// ---------------------------------------------------------------------------
+function setupMenus() {
+  if (!browser.menus) return;
+  browser.menus.removeAll()
+    .then(() =>
+      browser.menus.create({
+        id: 'lah-selection',
+        title: 'Send selection to Local AI Hub',
+        contexts: ['selection'],
+      })
+    )
+    .catch((error) => logLine('error', 'menus.create failed', LAH.errorMessage(error)));
+}
+
+if (browser.menus && browser.menus.onClicked) {
+  browser.menus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== 'lah-selection' || !tab || tab.id == null) return;
+    browser.tabs
+      .sendMessage(tab.id, { kind: KIND.COMMAND, command: 'lah-selection', text: info.selectionText || '' })
+      .catch((error) => logLine('error', 'selection dispatch failed', LAH.errorMessage(error)));
+  });
+}
 
 browser.commands.onCommand.addListener((command) => {
   browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
@@ -360,17 +400,20 @@ browser.commands.onCommand.addListener((command) => {
 
 browser.runtime.onInstalled.addListener(async () => {
   await loadSettings();
+  setupMenus();
   logLine('info', 'extension installed/updated');
   if (state.settings.autoConnect) connect();
 });
 
 browser.runtime.onStartup.addListener(async () => {
   await loadSettings();
+  setupMenus();
   if (state.settings.autoConnect) connect();
 });
 
 // MV2 persistent background page: initialise immediately as well.
 loadSettings().then(() => {
   setBadge();
+  setupMenus();
   if (state.settings.autoConnect) connect();
 });

@@ -77,6 +77,15 @@ DEFAULTS: dict[str, Any] = {
         "ttl_seconds": 900,
         "max_entries": 256,
     },
+    "bridge": {
+        # Master switch for the userscript <-> content-script bridge.  A domain
+        # must *also* opt in with "bridge": {"tampermonkey": true}.
+        "enabled": True,
+        "require_domain_opt_in": True,
+        "allow_apply": True,
+        "max_requests_per_minute": 30,
+        "max_input_bytes": 256 * 1024,
+    },
     "security": {
         "max_input_bytes": 4 * 1024 * 1024,
         "allow_page_supplied_config": False,
