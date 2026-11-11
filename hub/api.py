@@ -114,6 +114,15 @@ def openapi_document(port: int = 8765) -> dict:
     paths_doc: dict[str, dict] = {}
     for route, kind in GET_ROUTES.items():
         paths_doc[route] = {"get": envelope(f"{kind} control message")}
+    paths_doc["/v1/tasks"]["get"]["parameters"] = [
+        {
+            "name": "limit",
+            "in": "query",
+            "required": False,
+            "schema": {"type": "integer", "minimum": 1},
+            "description": "how many finished tasks to return from the history",
+        }
+    ]
     paths_doc["/v1/domains/{domain}"] = {
         "get": {
             **envelope("domains.get for one domain"),
@@ -181,6 +190,18 @@ def openapi_document(port: int = 8765) -> dict:
                 "is true."
             ),
             "responses": {"200": {"description": "text/event-stream"}},
+            "parameters": [
+                {
+                    "name": "access_token",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"},
+                    "description": (
+                        "bearer token for clients that cannot set headers "
+                        "(EventSource); only honoured when api.allow_token_query is true"
+                    ),
+                }
+            ],
         }
     }
     return {

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -124,6 +125,11 @@ def mv3_manifest(base: dict, target: str) -> dict:
     else:
         manifest.pop("browser_specific_settings", None)
         manifest["minimum_chrome_version"] = MINIMUM_CHROME_VERSION
+        # Chrome spells the context-menu permission differently; the shim
+        # exposes it as browser.menus either way.
+        manifest["permissions"] = [
+            "contextMenus" if name == "menus" else name for name in manifest["permissions"]
+        ]
         commands = manifest.get("commands", {})
         kept = 0
         for command in commands.values():
@@ -155,6 +161,18 @@ def write_service_worker(target: Path, scripts: list[str]) -> None:
     (target / "service-worker.js").write_text(
         SERVICE_WORKER.format(imports=imports), encoding="utf-8"
     )
+
+
+def service_worker_imports(source: str) -> list[str]:
+    """The importScripts() list of a generated bootstrap, in order.
+
+    Only the generated form is understood (one quoted path per line); anything
+    else yields an empty list so validation reports it instead of guessing.
+    """
+    match = re.search(r"importScripts\((.*?)\);", source, re.DOTALL)
+    if not match:
+        return []
+    return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
 
 
 def build_readme(target: str, manifest: dict) -> str:
@@ -222,16 +240,27 @@ def validate(target: Path, manifest: dict, browser: str) -> list[str]:
         problems.append("alarms permission missing (keep-alive would fail)")
 
     background = manifest.get("background", {})
+    worker_imports: list[str] = []
     if browser == "chrome":
         worker = background.get("service_worker")
         if not worker or not (target / worker).is_file():
             problems.append("service_worker file is missing")
+        else:
+            # The bootstrap *is* the entry point, so it is legitimately first.
+            # What must start with the shim is its importScripts() list.
+            worker_imports = service_worker_imports((target / worker).read_text(encoding="utf-8"))
+            if not worker_imports:
+                problems.append(f"{worker} does not importScripts anything")
+            elif worker_imports[0] != SHIM:
+                problems.append(f"{worker} imports {worker_imports[0]} before {SHIM}")
         if "browser_specific_settings" in manifest:
             problems.append("Chrome rejects browser_specific_settings")
+        if "menus" in manifest.get("permissions", []):
+            problems.append("Chrome needs 'contextMenus', not 'menus'")
         suggested = sum(1 for c in manifest.get("commands", {}).values() if "suggested_key" in c)
         if suggested > CHROME_SUGGESTED_KEY_LIMIT:
             problems.append(f"{suggested} suggested keys (Chrome allows {CHROME_SUGGESTED_KEY_LIMIT})")
-        scripts = [worker] if worker else []
+        scripts = ([worker] if worker else []) + worker_imports
     else:
         scripts = list(background.get("scripts", []))
         if not scripts:
@@ -239,19 +268,24 @@ def validate(target: Path, manifest: dict, browser: str) -> list[str]:
 
     for entry in manifest.get("content_scripts", []):
         scripts += list(entry.get("js", []))
-    for name in scripts:
+    for name in dict.fromkeys(scripts):
         if not name:
             continue
-        path = target / name
-        if not path.is_file():
+        if not (target / name).is_file():
             problems.append(f"script not found: {name}")
-            continue
-        if name != SHIM and scripts.index(name) == 0:
-            problems.append(f"{name} is loaded before the compatibility shim")
-    for group in (manifest.get("background", {}).get("scripts", []),
-                  *[entry.get("js", []) for entry in manifest.get("content_scripts", [])]):
+
+    # Every *script list* the browser loads in order must begin with the shim.
+    groups = [
+        ("background.scripts", manifest.get("background", {}).get("scripts", [])),
+        ("service-worker importScripts", worker_imports),
+        *[
+            (f"content_scripts[{index}].js", entry.get("js", []))
+            for index, entry in enumerate(manifest.get("content_scripts", []))
+        ],
+    ]
+    for label, group in groups:
         if group and group[0] != SHIM:
-            problems.append(f"script list does not start with {SHIM}: {group}")
+            problems.append(f"{label} does not start with {SHIM}: {group}")
 
     for icon in manifest.get("icons", {}).values():
         if not (target / icon).is_file():

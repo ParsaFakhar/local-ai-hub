@@ -190,9 +190,10 @@ def _run_remote(client: LocalClient, args) -> dict:
         "domains": "/v1/domains",
         "models": "/v1/models",
         "config": "/v1/config",
-        "domain": f"/v1/domains/{args.name}",
-    }[args.command]
-    return client.call("GET", route)
+    }
+    if args.command == "domain":
+        return client.call("GET", f"/v1/domains/{args.name}")
+    return client.call("GET", route[args.command])
 
 
 def _local_request(args) -> dict:
@@ -213,6 +214,12 @@ def _local_request(args) -> dict:
         if args.timeout:
             request["timeout_seconds"] = args.timeout
         return request
+    if args.command == "cancel":
+        return {
+            "type": "task.cancel",
+            "id": protocol.new_id("cli"),
+            "task_id": args.task_id,
+        }
     request = {"type": CONTROL_COMMANDS[args.command], "id": protocol.new_id("cli")}
     if args.command == "domain":
         request["domain"] = args.name
