@@ -2,7 +2,7 @@
 PYTHON ?= python3
 VERSION := $(shell $(PYTHON) -c "import json;print(json.load(open('extension/manifest.json'))['version'])")
 
-.PHONY: help install uninstall test unit extension-test smoke doctor icons lint package xpi zip clean api
+.PHONY: help install uninstall test unit extension-test smoke doctor icons lint package xpi zip mv3 clean api
 
 help:
 	@echo "Local AI Hub $(VERSION)"
@@ -12,6 +12,7 @@ help:
 	@echo "  make doctor     diagnose the installation"
 	@echo "  make lint       syntax-check every Python and JavaScript file"
 	@echo "  make package    build dist/local-ai-hub-$(VERSION).zip and the .xpi"
+	@echo "  make mv3        build MV3 variants (dist/mv3-firefox, dist/mv3-chrome)"
 	@echo "  make api        run the experimental local HTTP API"
 
 install:
@@ -44,6 +45,9 @@ lint:
 
 package:
 	$(PYTHON) scripts/package.py
+
+mv3:
+	$(PYTHON) scripts/build_mv3.py
 
 xpi:
 	$(PYTHON) scripts/package.py --xpi-only

@@ -111,12 +111,20 @@ def audit(link: dict, page_url: str, config: dict, statuses: dict) -> dict:
     treat_www_same = bool(config.get("treat_www_same", True))
     tracking = {str(name).lower() for name in config.get("tracking_params", [])}
     shorteners = {str(name).lower() for name in config.get("shorteners", [])}
-    allowlist = {host_of(str(entry), treat_www_same) for entry in config.get("allowlist_domains", [])}
+    allowlist = {
+        host_of(entry if "://" in entry or entry.startswith("//") else "//" + entry, treat_www_same)
+        for entry in (str(item).strip() for item in config.get("allowlist_domains", []))
+    }
     allowlist = {registrable(host) for host in allowlist if host}
 
     absolute = urljoin(page_url, href) if page_url else href
     page_host = host_of(page_url, treat_www_same)
-    kind, host, external = classify(absolute, page_host, treat_www_same)
+    if href.strip().startswith("#"):
+        # Fragment-only links stay anchors even after urljoin() made them absolute.
+        kind = "empty" if href.strip() == "#" else "anchor"
+        host, external = "", False
+    else:
+        kind, host, external = classify(absolute, page_host, treat_www_same)
     issues: list[str] = []
 
     if kind == "empty":
@@ -190,7 +198,8 @@ def audit(link: dict, page_url: str, config: dict, statuses: dict) -> dict:
     return {
         "id": identifier,
         "href": href,
-        "normalized": normalize(absolute, tracking, bool(config.get("strip_tracking", True))),
+        "normalized": ("" if kind == "anchor" or href.strip() == "#"
+                       else normalize(absolute, tracking, bool(config.get("strip_tracking", True)))),
         "kind": kind,
         "domain": host,
         "external": external,
@@ -206,6 +215,9 @@ def main(task, hub):
         raise PluginError("'links' must be an array", "invalid_input")
 
     config = task.config
+    if task.input.get("allowlist_domains"):
+        # The input schema advertises allowlist_domains; honour it over config.
+        config = {**config, "allowlist_domains": task.input["allowlist_domains"]}
     page_url = str(task.input.get("page_url") or task.context.get("url") or "")
     statuses = task.input.get("statuses") or {}
     if not isinstance(statuses, dict):

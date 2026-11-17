@@ -99,7 +99,10 @@ class Gray:
                 source = rows[index]
                 for x in range(width):
                     row[x] += source[x] * weight
-            out.extend(row)
+            # Snap away float accumulation noise (1 ulp): on flat regions the
+            # strict > comparisons in dHash/pHash would otherwise turn rounding
+            # artefacts into brightness-dependent phantom hash bits.
+            out.extend(round(value, 6) for value in row)
         return out
 
 
@@ -665,7 +668,7 @@ def perceptual_hash(image: Gray, size: int = 32, hash_size: int = 8) -> int:
     for v in range(hash_size):
         column = matrix[v]
         for u in range(hash_size):
-            coefficients.append(sum(column[y] * temp[u][y] for y in range(size)))
+            coefficients.append(round(sum(column[y] * temp[u][y] for y in range(size)), 9))
     body = coefficients[1:]  # drop the DC term: it only encodes overall brightness
     ordered = sorted(body)
     middle = len(ordered) // 2

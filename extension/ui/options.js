@@ -70,6 +70,77 @@ function featureTemplate(pluginId) {
     base.fields = { name: { attr: 'text' } };
     base.input = { name: 'world' };
     base.apply.actions = [{ action: 'badge', text: '{greeting}' }];
+  } else if (pluginId === 'page.summarize') {
+    base.root_selector = 'article, main, body';
+    base.item_selector = 'p';
+    base.fields = { text: { attr: 'text' } };
+    base.input = { items: '@items', title: '@page.title' };
+    base.options = { max_words: 160, bullets: 5 };
+    // Page-level output: per-item results are the optional highlights.
+    base.apply.results_path = 'highlights';
+    base.apply.actions = [{ action: 'attribute', name: 'title', value: '{why}' }];
+  } else if (pluginId === 'text.translate') {
+    base.item_selector = 'p, li';
+    base.fields = { text: { attr: 'text' } };
+    base.input = { segments: '@items', target_language: 'en' };
+    base.options = { batch_size: 6 };
+    // Non-destructive by default. To replace text in place, set
+    // allow_text_replace: true and use { action: 'text', value: '{text}' }.
+    base.apply.actions = [{ action: 'badge', text: '{text}' }];
+  } else if (pluginId === 'links.check') {
+    base.item_selector = 'a[href]';
+    base.fields = {
+      href: { attr: 'href' },
+      text: { attr: 'text' },
+      rel: { attr: 'rel' },
+      target: { attr: 'target' },
+    };
+    base.input = { links: '@items', page_url: '@page.url' };
+    base.options = {};
+    base.apply.actions = [
+      { action: 'badge', text: '{kind} {risk}' },
+      { action: 'attribute', name: 'data-lah-issues', value: '{issues}' },
+    ];
+  } else if (pluginId === 'forms.fill') {
+    base.item_selector = 'input, select, textarea';
+    base.fields = {
+      name: { attr: 'name' },
+      type: { attr: 'type' },
+      placeholder: { attr: 'placeholder' },
+      autocomplete: { attr: 'autocomplete' },
+      value: { attr: 'value' },
+    };
+    base.input = { fields: '@items', page_title: '@page.title', profile: {} };
+    base.options = { use_llm: false };
+    // Suggestions only — the applier cannot write input values by design.
+    base.apply.results_path = 'suggestions';
+    base.apply.actions = [
+      { action: 'attribute', name: 'title', value: 'suggested: {value}' },
+      { action: 'attribute', name: 'data-lah-suggestion', value: '{value}' },
+    ];
+  } else if (pluginId === 'images.dedupe') {
+    base.item_selector = 'img';
+    base.fields = {
+      data_base64: { attr: 'src', as: 'image', max_size: 512, quality: 0.85 },
+      filename: { attr: 'alt' },
+    };
+    base.input = { images: '@items' };
+    base.options = { algorithm: 'phash', threshold: 6 };
+    base.apply.actions = [
+      { action: 'attribute', name: 'data-lah-duplicate-of', value: '{duplicate_of}' },
+      { action: 'attribute', name: 'data-lah-hash', value: '{hash}' },
+    ];
+  } else if (pluginId === 'moderation.queue') {
+    base.root_selector = 'div.comments';
+    base.item_selector = 'p.comment';
+    base.fields = { text: { attr: 'text' }, author: { selector: '.author', attr: 'text' } };
+    base.input = { items: '@items', scope: '@page.url', page_title: '@page.title' };
+    base.options = { labels: ['ok', 'spam', 'toxic', 'off-topic'] };
+    base.apply.actions = [
+      { action: 'badge', text: '{label} \u2192 {recommendation}' },
+      { action: 'attribute', name: 'data-lah-label', value: '{label}' },
+      { action: 'class', map: { spam: 'lah-flag-spam', toxic: 'lah-flag-toxic' } },
+    ];
   }
   return base;
 }

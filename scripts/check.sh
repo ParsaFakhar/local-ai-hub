@@ -34,5 +34,8 @@ fi
 echo "== End-to-end smoke test =="
 "$PYTHON" scripts/smoke_test.py --quiet
 
+echo "== MV3 builds =="
+"$PYTHON" scripts/build_mv3.py | tail -4
+
 echo
 echo "All checks passed."
