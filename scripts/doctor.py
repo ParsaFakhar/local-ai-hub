@@ -93,6 +93,14 @@ def main(argv=None) -> int:
     try:
         if config.get("ollama.mock"):
             line("warn", "backend", "mock (offline test mode)")
+        elif engine.models.backend == "openai":
+            alive = engine.models.client.is_alive()
+            line("ok" if alive else "warn", "backend",
+                 f"openai-compatible at {engine.models.client.base_url}"
+                 + ("" if alive else " — not reachable; start the server yourself"))
+            if alive:
+                models = engine.models.installed_models(refresh=True)
+                line("ok" if models else "warn", "served models", ", ".join(models) or "none")
         elif binary:
             line("ok", "ollama binary", binary)
             alive = engine.models.client.is_alive()

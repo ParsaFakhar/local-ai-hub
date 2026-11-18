@@ -9,7 +9,9 @@ editors — use the same universal task protocol without Firefox.
 
 Bound to 127.0.0.1 only, bearer-token authenticated, no CORS headers, and any
 request carrying a browser ``Origin`` is refused unless explicitly allowlisted.
-A webpage therefore cannot drive it.
+A webpage therefore cannot drive it.  Authenticated requests share a
+sliding-window quota (``api.max_requests_per_minute``, default 120, ``0``
+disables); exceeding it answers ``429`` with a ``Retry-After`` header.
 
 Optionally the same surface is served on an AF_UNIX socket (``api.unix_socket``,
 mode 0600) so local programs can skip TCP entirely::
@@ -44,12 +46,14 @@ Routes
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import secrets
 import socket
 import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -110,6 +114,7 @@ def openapi_document(port: int = 8765) -> dict:
                     "content": {"application/json": {"schema": {"type": "object"}}},
                 },
                 "401": {"description": "missing or invalid bearer token"},
+                "429": {"description": "rate limit exceeded (api.max_requests_per_minute); Retry-After header"},
             },
         }
 
@@ -148,6 +153,7 @@ def openapi_document(port: int = 8765) -> dict:
                 "200": {"description": "protocol result envelope with the task record"},
                 "401": {"description": "missing or invalid bearer token"},
                 "404": {"description": "no running or recent task with that id"},
+                "429": {"description": "rate limit exceeded; Retry-After header"},
             },
         }
     }
@@ -177,6 +183,7 @@ def openapi_document(port: int = 8765) -> dict:
                 "400": {"description": "task failed; error envelope"},
                 "401": {"description": "missing or invalid bearer token"},
                 "413": {"description": "body exceeds security.max_input_bytes"},
+                "429": {"description": "rate limit exceeded; Retry-After header"},
             },
         }
     }
@@ -191,7 +198,10 @@ def openapi_document(port: int = 8765) -> dict:
                 "also accepts ?access_token=<token> when api.allow_token_query "
                 "is true."
             ),
-            "responses": {"200": {"description": "text/event-stream"}},
+            "responses": {
+                "200": {"description": "text/event-stream"},
+                "429": {"description": "rate limit exceeded; Retry-After header"},
+            },
             "parameters": [
                 {
                     "name": "access_token",
@@ -259,6 +269,35 @@ class EventBus:
             return len(self._subscribers)
 
 
+class RateLimiter:
+    """Sliding-window request quota, mirroring the userscript bridge policy.
+
+    One global window for all authenticated API requests (there is a single
+    bearer token, so per-client accounting would be security theatre).
+    ``max_per_minute <= 0`` disables the limit.  ``check()`` records one hit
+    and returns ``(allowed, retry_after_seconds)``; the retry hint is the
+    time until the oldest hit leaves the 60 s window.
+    """
+
+    def __init__(self, max_per_minute: int, clock=time.monotonic):
+        self.max = int(max_per_minute)
+        self._clock = clock
+        self._hits: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def check(self) -> tuple[bool, int]:
+        if self.max <= 0:
+            return True, 0
+        now = self._clock()
+        with self._lock:
+            while self._hits and now - self._hits[0] >= 60.0:
+                self._hits.popleft()
+            if len(self._hits) >= self.max:
+                return False, max(1, math.ceil(60.0 - (now - self._hits[0])))
+            self._hits.append(now)
+            return True, 0
+
+
 def _make_handler(config, engine, bus, token, doc_port: int = 8765):
     """Build the request handler around one engine (shared by both transports)."""
     lock = threading.Lock()
@@ -266,6 +305,7 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
     allow_token_query = bool(config.get("api.allow_token_query", True))
     keepalive = float(config.get("api.sse_keepalive_seconds", 15))
     max_input = int(config.get("security.max_input_bytes", 4 * 1024 * 1024))
+    limiter = RateLimiter(int(config.get("api.max_requests_per_minute", 120)))
     started_at = time.time()
 
     class Handler(BaseHTTPRequestHandler):
@@ -273,13 +313,15 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
         protocol_version = "HTTP/1.1"
 
         # -- helpers ----------------------------------------------------
-        def _reply(self, status: int, payload: dict) -> None:
+        def _reply(self, status: int, payload: dict, headers: dict | None = None) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             # Deliberately no Access-Control-Allow-* headers.
             self.end_headers()
             try:
@@ -287,10 +329,10 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        def _error(self, status: int, code: str, message: str) -> None:
+        def _error(self, status: int, code: str, message: str, headers: dict | None = None) -> None:
             # We may not have drained the request body; do not reuse the socket.
             self.close_connection = True
-            self._reply(status, protocol.make_error("-", code, message))
+            self._reply(status, protocol.make_error("-", code, message), headers=headers)
 
         def _token_from_request(self, parsed) -> str:
             header = self.headers.get("Authorization", "")
@@ -336,6 +378,16 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
                     401,
                     protocol.ErrorCode.UNAUTHORIZED,
                     "missing or invalid bearer token",
+                )
+                return False
+            allowed, retry_after = limiter.check()
+            if not allowed:
+                self._error(
+                    429,
+                    protocol.ErrorCode.RATE_LIMITED,
+                    f"rate limit exceeded ({limiter.max} requests/minute); "
+                    f"retry in {retry_after}s",
+                    headers={"Retry-After": str(retry_after)},
                 )
                 return False
             return True

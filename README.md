@@ -27,7 +27,7 @@ local-ai-hub/
 ├── scripts/            installer helpers, doctor, smoke test, packaging, MV3 builder
 ├── templates/          Skeleton for writing your own plugin
 ├── examples/           Sample inputs, Tampermonkey userscript, API/engine clients
-├── tests/              330 Python unit tests + 28 extension logic checks
+├── tests/              376 Python unit tests + 28 extension logic checks
 └── docs/               Architecture, protocol, plugin API, security, MV3, install
 ```
 
@@ -203,7 +203,13 @@ codes: [docs/TAMPERMONKEY.md](docs/TAMPERMONKEY.md).
 
 ## Model runtime lifecycle
 
+* two backends behind one interface: **Ollama** (default) or any
+  **OpenAI-compatible server** — llama.cpp `llama-server`, LM Studio — via
+  `ollama.backend: "openai"` + `ollama.host`/`ollama.port` (optional
+  `ollama.api_key`); plugins, protocol and SDKs are identical either way
+  (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 * Ollama is started **on demand** (`ollama serve`) only when a task needs it
+  (openai-compatible servers are started by you, not the hub)
 * models load on first use, with `keep_alive` (default `5m`)
 * optional **warm-up** (`ollama.warmup`, off by default) preloads the default
   model — plus the vision model / `warmup_models` if asked — on a background
@@ -227,7 +233,9 @@ codes: [docs/TAMPERMONKEY.md](docs/TAMPERMONKEY.md).
 * **Capability enforcement** — a plugin may only use the `llm.*` capabilities its
   manifest declares; anything else is refused with `capability_denied`.
 * **Local HTTP API** — opt-in, token-authenticated, localhost only, with SSE
-  events and an optional Unix socket (see [docs/PROTOCOL.md](docs/PROTOCOL.md)).
+  events, an optional Unix socket and a sliding-window rate limit
+  (`api.max_requests_per_minute`, 429 + `Retry-After`; see
+  [docs/PROTOCOL.md](docs/PROTOCOL.md)).
 
 ## Security model
 
@@ -252,7 +260,7 @@ Details: [docs/SECURITY.md](docs/SECURITY.md).
 ## Testing
 
 ```bash
-make test        # 330 Python unit tests + 28 extension logic checks
+make test        # 376 Python unit tests + 28 extension logic checks
 make smoke       # 18 end-to-end checks over the real native messaging pipe
 make mv3         # build + validate the MV3 firefox and chrome variants
 make doctor      # diagnose an installation

@@ -38,6 +38,10 @@ DEFAULTS: dict[str, Any] = {
         "node": "node",
     },
     "ollama": {
+        # "ollama" (default) or "openai" for any OpenAI-compatible server
+        # (llama.cpp llama-server, LM Studio).  Aliases: llama.cpp, lmstudio.
+        "backend": "ollama",
+        "api_key": "",
         "binary": "auto",
         "host": "127.0.0.1",
         "port": 11434,
@@ -76,6 +80,9 @@ DEFAULTS: dict[str, Any] = {
         "allowed_origins": [],
         "allow_token_query": True,
         "sse_keepalive_seconds": 15,
+        # Sliding-window quota for authenticated requests (all clients share
+        # one window); 0 disables it.  Mirrors bridge.max_requests_per_minute.
+        "max_requests_per_minute": 120,
         # Opt-in alternative transport for local programs: an AF_UNIX socket
         # with 0600 permissions instead of a TCP port.
         "unix_socket": "",

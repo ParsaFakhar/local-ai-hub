@@ -138,7 +138,7 @@ In Firefox: **Settings → Diagnostics → Ping host / Copy diagnostics**.
 | `No such native application local_ai_hub` | Manifest missing/misnamed; must be `local_ai_hub.json` in `NativeMessagingHosts` |
 | `This extension does not have permission to use native application` | `allowed_extensions` must contain `local-ai-hub@localaihub.dev`; the loaded extension must have that gecko id |
 | Host connects then dies instantly | Read `hub.log`; usually a Python path issue — set `runtime.python` to an absolute path |
-| `model_unavailable` | Install Ollama, or `ollama pull <tag>`; check `ollama.binary` in `hub.json` |
+| `model_unavailable` | Install Ollama, or `ollama pull <tag>`; check `ollama.binary` in `hub.json`. With `ollama.backend: "openai"`: start the server (LM Studio / `llama-server`) and check `ollama.host`/`ollama.port` |
 | `runtime_missing` for JS plugins | `brew install node`, or set `runtime.node` |
 | `message_too_large` | Lower `batch_size` / `max_items`, or reduce `imageMaxSize` |
 | Tasks time out on first run | First model load is slow; raise `plugins.timeout_seconds` and the extension's task timeout |

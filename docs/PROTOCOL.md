@@ -93,7 +93,7 @@ When the result cache is enabled and hits, `meta.cache` carries
 | `unknown_task` | `tasks.get` / cancel target is neither running nor in history |
 | `message_too_large` | Frame exceeds the native messaging caps (1 MiB out / 64 MiB in) |
 | `forbidden` | Bridge policy denies this domain/plugin, or `apply` is not allowed |
-| `rate_limited` | Too many bridge requests per minute, or too many in flight |
+| `rate_limited` | Too many bridge requests per minute / in flight, or the HTTP API quota is exhausted (HTTP 429 + `Retry-After`) |
 | `unauthorized` | HTTP API: missing/invalid bearer token |
 | `not_found` | HTTP API: unknown route or object |
 | `internal_error` | Unexpected engine error (logged with traceback) |
@@ -126,7 +126,7 @@ intake queue before it ever started (no result frame follows it).
 | `plugins.list` | `{plugins: [manifest summaries], errors: []}` |
 | `domains.list` | `{domains: [{domain, features, label}]}` |
 | `domains.get` | effective config for `domain` (+ `overrides`), plus `available_plugins` and the resolved `bridge_policy` |
-| `models.list` | backend, running, loaded/installed models, default/vision model, `warmup` report |
+| `models.list` | backend (`mock` / `ollama` / `openai`), running, loaded/installed models, default/vision model, `warmup` report |
 | `models.unload` | `{unloaded: [names]}` — frees memory immediately |
 | `models.warmup` | `{warmup: report}` — starts an asynchronous preload of `models` (list of names, optional; default is the configured warm-up set) and returns immediately |
 | `config.get` | effective hub config + sources |
@@ -187,6 +187,9 @@ task. It is **off by default** (`ollama.warmup`).
 * Warm-up does not pin anything: the idle reaper still unloads after
   `ollama.idle_unload_seconds`. With `ollama.mock` the report is deterministic
   and nothing is actually loaded.
+* With `ollama.backend: "openai"` the load is a **1-token chat completion**
+  (LM Studio loads just-in-time; llama.cpp already has the model in memory),
+  and idle unload is a no-op — the server manages its own memory.
 
 ## Transport: native messaging
 
@@ -274,6 +277,14 @@ curl -s http://127.0.0.1:8765/v1/task -H "Authorization: Bearer $TOKEN" \
 
 Localhost only, bearer token, **no CORS headers**. `api.allowed_origins` can
 restrict origins further; it is empty (no cross-origin access) by default.
+
+Authenticated requests share one sliding-window quota,
+`api.max_requests_per_minute` (default **120**, `0` disables), mirroring the
+userscript bridge policy. Every route counts, GET and POST alike; the SSE
+stream counts once when it opens. Exceeding it answers **429** with a
+`rate_limited` error envelope and a `Retry-After` header (seconds until the
+oldest request leaves the window). Unauthenticated requests are refused with
+401 first and never consume quota.
 
 ### Server-Sent Events
 

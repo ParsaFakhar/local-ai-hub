@@ -43,7 +43,10 @@ class ServerTestCase(unittest.TestCase):
         cls.port = free_port()
         settings = {
             "ollama": {"mock": True},
-            "api": {"enabled": True, "port": cls.port, "token_file": "test-token"},
+            # Rate limiting is exercised by its own per-test servers below;
+            # the shared route/auth suites run with the quota disabled.
+            "api": {"enabled": True, "port": cls.port, "token_file": "test-token",
+                    "max_requests_per_minute": 0},
         }
         for key, value in cls.extra_config.items():
             settings.setdefault(key, {}).update(value)
@@ -535,3 +538,142 @@ class HTTPStatusMappingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RateLimiterTests(unittest.TestCase):
+    """The sliding window itself, with a fake clock (no waiting 60 s)."""
+
+    def test_zero_or_negative_disables(self):
+        for limit in (0, -5):
+            limiter = api.RateLimiter(limit)
+            for _ in range(100):
+                self.assertEqual(limiter.check(), (True, 0))
+
+    def test_allows_up_to_the_limit_then_rejects(self):
+        now = [1000.0]
+        limiter = api.RateLimiter(3, clock=lambda: now[0])
+        for _ in range(3):
+            self.assertEqual(limiter.check(), (True, 0))
+        allowed, retry = limiter.check()
+        self.assertFalse(allowed)
+        self.assertEqual(retry, 60)
+
+    def test_window_slides(self):
+        now = [1000.0]
+        limiter = api.RateLimiter(2, clock=lambda: now[0])
+        limiter.check()
+        now[0] += 30
+        limiter.check()
+        allowed, retry = limiter.check()
+        self.assertFalse(allowed)
+        self.assertEqual(retry, 30)  # oldest hit leaves the window in 30 s
+        now[0] += 31  # first hit expired, second still inside
+        self.assertEqual(limiter.check(), (True, 0))
+        self.assertFalse(limiter.check()[0])
+
+    def test_retry_hint_is_at_least_one_second(self):
+        now = [1000.0]
+        limiter = api.RateLimiter(1, clock=lambda: now[0])
+        limiter.check()
+        now[0] += 59.9
+        allowed, retry = limiter.check()
+        self.assertFalse(allowed)
+        self.assertEqual(retry, 1)
+
+    def test_default_config_limit_is_120(self):
+        self.assertEqual(load_config({}).get("api.max_requests_per_minute"), 120)
+
+    def test_openapi_documents_429(self):
+        doc = api.openapi_document()
+        for route in ("/v1/ping", "/v1/task", "/v1/tasks/{id}", "/v1/events"):
+            method = "post" if route == "/v1/task" else "get"
+            self.assertIn("429", doc["paths"][route][method]["responses"], route)
+
+
+class RateLimitHTTPTests(unittest.TestCase):
+    """429 behaviour over a real socket; one fresh server (window) per test."""
+
+    def start(self, limit):
+        tmp = tempfile.mkdtemp(prefix="lah-ratelimit-")
+        old_data = os.environ.get("LOCAL_AI_HUB_DATA")
+        os.environ["LOCAL_AI_HUB_DATA"] = tmp
+
+        def cleanup():
+            if old_data is None:
+                os.environ.pop("LOCAL_AI_HUB_DATA", None)
+            else:
+                os.environ["LOCAL_AI_HUB_DATA"] = old_data
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        self.addCleanup(cleanup)
+        port = free_port()
+        config = load_config({
+            "ollama": {"mock": True},
+            "api": {"enabled": True, "port": port, "token_file": "test-token",
+                    "max_requests_per_minute": limit},
+        })
+        token = api.ensure_token(config)
+        server = api.make_server(config)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop():
+            server.shutdown()
+            server.server_close()
+            server.hub_engine.shutdown()
+            thread.join(timeout=5)
+
+        self.addCleanup(stop)
+        return f"http://127.0.0.1:{port}", token
+
+    def get(self, base, token, route="/v1/ping"):
+        request = urllib.request.Request(base + route, headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, dict(response.headers), json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers), json.loads(exc.read())
+
+    def test_quota_exhaustion_returns_429_with_retry_after(self):
+        base, token = self.start(3)
+        for _ in range(3):
+            self.assertEqual(self.get(base, token)[0], 200)
+        status, headers, body = self.get(base, token)
+        self.assertEqual(status, 429)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["error"]["code"], "rate_limited")
+        retry = int(headers["Retry-After"])
+        self.assertTrue(1 <= retry <= 60, retry)
+
+    def test_post_routes_share_the_quota(self):
+        base, token = self.start(2)
+        self.assertEqual(self.get(base, token)[0], 200)
+        self.assertEqual(self.get(base, token)[0], 200)
+        request = urllib.request.Request(
+            base + "/v1/cache/clear", data=b"{}", method="POST",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 429)
+
+    def test_unauthenticated_requests_do_not_consume_quota(self):
+        base, token = self.start(2)
+        for _ in range(5):
+            self.assertEqual(self.get(base, "wrong-token")[0], 401)
+        self.assertEqual(self.get(base, token)[0], 200)
+        self.assertEqual(self.get(base, token)[0], 200)
+        self.assertEqual(self.get(base, token)[0], 429)
+
+    def test_zero_disables_the_limit(self):
+        base, token = self.start(0)
+        for _ in range(30):
+            self.assertEqual(self.get(base, token)[0], 200)
+
+    def test_client_surfaces_429_as_api_error(self):
+        base, token = self.start(1)
+        client = LocalClient(token, port=int(base.rsplit(":", 1)[1]))
+        client.ping()
+        with self.assertRaises(APIError) as caught:
+            client.ping()
+        self.assertEqual(caught.exception.status, 429)

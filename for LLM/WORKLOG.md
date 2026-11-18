@@ -1,5 +1,68 @@
 # WORKLOG — local-ai-hub
 
+## 2026-11-19 (session 3, cont.) — P13 hygiene + packaging + consistency
+
+- Deleted the tracked `.DS_Store` a fresh clone restored; `.gitignore` already
+  covers `.DS_Store` / `dist/` / `__pycache__/` / `.pytest_cache/`.
+- Consistency pass: test counts 376/28/18 uniform; bridge `ready` payload in
+  docs/TAMPERMONKEY.md matches extension/content/bridge.js field-for-field;
+  MV3 §9 + Chrome native-host paths, PLUGIN_API "enforced", DOMAIN_CONFIG
+  bridge keys, 10 plugin dirs all verified by grep. Corrected the llama-server
+  port claim in ARCHITECTURE: 9931 in recent releases, 8080 in older builds
+  (web-verified; LM Studio 1234).
+- Packaged from the final tree: `python3 scripts/package.py` →
+  `handoff_out/local-ai-hub-0.2.0.zip` (136 files, includes `for LLM/`, no
+  `.DS_Store`) + `handoff_out/local-ai-hub-extension-0.2.0.xpi` (19 files,
+  manifest at root), both OUTSIDE the repo at the workspace root; `dist/` and
+  caches removed again. All 4 ledger fingerprints re-checked at the end.
+- PLAN complete: P11/P12/P13 [x]; real-browser and real-model validation [!]
+  blocked in the sandbox.
+
+## 2026-11-19 (session 3, cont.) — API rate limiting (P12)
+
+- `hub/api.py`: `RateLimiter` (sliding 60 s window, injectable clock, 0/negative
+  disables), enforced in `_guard` **after** auth so 401 floods never consume
+  quota; 429 + `Retry-After` + `rate_limited` envelope; `_reply/_error` gained
+  an optional headers arg; OpenAPI documents 429 on every route incl. SSE.
+- Config: `api.max_requests_per_minute` = 120 (defaults + config/hub.json).
+  One global window (single bearer token → per-client accounting is theatre).
+- `tests/test_api.py`: shared route/auth harness now runs with quota 0;
+  6 fake-clock window tests + 5 real-socket tests (fresh server per test:
+  exhaustion/Retry-After, POST shares quota, 401s don't consume, 0 disables,
+  LocalClient surfaces APIError status 429). Suite 376 OK, smoke 18/18;
+  ledger fingerprints 10a38ae13eb7 / 9347527bcf6a.
+- Docs: PROTOCOL error table + HTTP quota paragraph, SECURITY §5 + §6 row,
+  README API bullet + counts 365→376, CHANGELOG API bullet + count, ROADMAP
+  quota item removed.
+
+## 2026-11-19 (session 3) — second inference backend (P11)
+
+- Phase 0: all four ledger fingerprints matched at base `d4aa30e`; nothing
+  rerun before the code changed.
+- **Feature: OpenAI-compatible backend.** `hub/models/openai_backend.py`
+  (`OpenAICompatClient`): `/v1/models`, `/v1/chat/completions` (JSON + SSE),
+  `response_format` json_object/json_schema, Ollama base64 images → data-URI
+  content parts (mime sniffed), option map (num_predict→max_tokens; num_ctx/
+  top_k dropped), optional bearer key, `load` = 1-token completion, `unload`
+  no-op, `running()` = [] (no standard endpoint). Raises the shared
+  `OllamaError`. External facts verified by web search: llama.cpp server and
+  LM Studio both support json_schema on /v1/chat/completions.
+- `ModelManager`: `ollama.backend` switch + aliases (llama.cpp/lmstudio/...),
+  unknown value → ModelError config_error; binary search only for ollama;
+  `ensure_server` never auto-starts external servers (clear model_unavailable
+  hint); `status.backend` = mock/ollama/openai. Config defaults + hub.json:
+  `ollama.backend` ("ollama"), `ollama.api_key` (""). doctor.py reports the
+  external server + served models instead of the ollama binary.
+- `tests/test_openai_backend.py`: 35 tests against a real local HTTP server
+  (client wire format + manager integration incl. warm-up, aliases, no
+  auto-start). Full suite 365 OK; smoke 18/18. Ledger Python rows updated
+  (fingerprints 0ab7c250d6fb / 7a9a73419e4a); extension rows untouched.
+- Docs: ARCHITECTURE module rows + new "Model backends" section (config
+  example, mapping, lifecycle differences), PROTOCOL models.list backend
+  values + warm-up openai note, README lifecycle bullet + counts 330→365,
+  CHANGELOG 0.2.0 backend bullet + count, ROADMAP backends item → MLX-only,
+  INSTALL_MACOS model_unavailable hint.
+
 ## 2026-11-19 (cont.) — model warm-up policy
 
 - Phase 0: all four ledger fingerprints still matched; nothing rerun before the

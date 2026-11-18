@@ -112,6 +112,58 @@ Items marked *(prior audit)* were verified by an earlier session at HEAD
       + 4 real-HTTP tests.
 - [x] Repackaged from the final tree → `handoff_out/` (134-file zip, 19-file xpi)
 
+## P11 — second inference backend (2026-11-19, this session)
+
+- [x] `hub/models/openai_backend.py`: OpenAICompatClient (llama.cpp / LM Studio)
+      behind the OllamaClient surface; SSE streaming, response_format schemas,
+      image data-URIs, option mapping, bearer token, 1-token warm-up load
+- [x] `ModelManager` backend switch + aliases, no auto-start for external
+      servers, `status.backend` = mock/ollama/openai; config defaults +
+      `config/hub.json` (`ollama.backend`, `ollama.api_key`); doctor.py branch
+- [x] `tests/test_openai_backend.py` (35 tests) → 365 Python / 18 smoke green
+- [x] Docs: ARCHITECTURE (module row + "Model backends" section), PROTOCOL
+      (models.list backend values, warm-up openai note), README (counts 365,
+      lifecycle bullet), CHANGELOG 0.2.0, ROADMAP (item → MLX-only),
+      INSTALL_MACOS troubleshooting
+- [x] Repackage to `handoff_out/` — done in P13
+
+## P12 — API rate limiting (2026-11-19, this session)
+
+- [x] `RateLimiter` (sliding 60 s window, fake-clock testable) in `hub/api.py`;
+      enforced in `_guard` after auth; 429 + `Retry-After` + `rate_limited`
+      envelope; `api.max_requests_per_minute` (120, 0 disables) in defaults +
+      `config/hub.json`; OpenAPI 429 responses
+- [x] 11 new tests in `tests/test_api.py` (window unit tests + real-socket 429
+      tests, one server per test) → 376 Python / 18 smoke green
+- [x] Docs: PROTOCOL (error table + HTTP quota paragraph), SECURITY (§5 bullet
+      + §6 limit row), README (API bullet + counts 376), CHANGELOG 0.2.0,
+      ROADMAP (quota item removed)
+
+## P13 — final hygiene, packaging, consistency (this session)
+
+- [x] Tracked `.DS_Store` deleted again; `.gitignore` covers `.DS_Store`,
+      `dist/`, `__pycache__/`, `.pytest_cache/`; `for LLM/` = 5 files;
+      `git status` shows only intended changes
+- [x] `python3 scripts/package.py` (no flags) from the final tree →
+      `handoff_out/local-ai-hub-0.2.0.zip` (136 files) +
+      `handoff_out/local-ai-hub-extension-0.2.0.xpi` (19 files) at the
+      workspace root; `dist/` + caches removed from the repo
+- [x] Consistency pass: no stale test counts (376/28/18 everywhere), no "not
+      implemented" claims, bridge `ready` payload matches bridge.js, MV3 §9 +
+      Chrome host paths present, PLUGIN_API "enforced", DOMAIN_CONFIG bridge
+      keys, 10 plugin dirs; llama-server port claim corrected (9931 recent /
+      8080 older, verified by web search)
+- [x] Ledger: all 4 rows re-fingerprinted at the end — Python rows current
+      (376 / 18), extension rows unchanged and still valid
+
+## Blocked in this sandbox (needs real hardware/software)
+
+- [!] Real-browser validation of the MV3 builds (`docs/MV3.md` §9) — no
+      browser here; static validation is green in the ledger
+- [!] Real-model + real-board validation and tuning (`batch_size`, `num_ctx`,
+      warm-up latency, openai backend against real llama.cpp/LM Studio) — no
+      Ollama/GPU here; wire format covered by fake-server tests
+
 ## Open project work (not this session)
 
 See `docs/ROADMAP.md`: real board selectors, real-model tuning, signed persistent

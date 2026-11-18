@@ -25,6 +25,15 @@ Engine
   `model.warming` / `model.warmed` / `model.warmup_failed` / `model.warmup_done`
   events and a `warmup` report in `status` / `models.list`. Failures are
   per-model and never break a task; the idle reaper still unloads warm models.
+- **Second inference backend**: `ollama.backend: "openai"` routes every model
+  call to any OpenAI-compatible server (llama.cpp `llama-server`, LM Studio;
+  aliases `llama.cpp`, `lmstudio`) instead of Ollama. Same interface, plugins
+  unchanged: `/v1/chat/completions` with SSE streaming, `fmt` mapped to
+  `response_format` (`json_object`/`json_schema`), base64 images converted to
+  `data:` URI content parts, sampling options mapped (`num_predict` →
+  `max_tokens`), optional bearer token (`ollama.api_key`). Warm-up becomes a
+  1-token completion (LM Studio JIT load); auto-start, `keep_alive` and idle
+  unload do not apply — the server manages its own lifecycle.
 - **Result cache** with TTL and an entry cap (`cache.enabled`,
   `cache.ttl_seconds`, `cache.max_entries`), off by default, plus `cache.clear`.
 - **Streaming inference** end to end: Ollama streaming and deterministic mock
@@ -58,6 +67,11 @@ Local HTTP API (still opt-in, localhost only, bearer token, no CORS)
 - Optional **AF_UNIX socket** transport (`api.unix_socket`), origin allowlist
   (`api.allowed_origins`) and token-in-query auth (`api.allow_token_query`) for
   clients such as `EventSource` that cannot set headers.
+- **Rate limiting** (`api.max_requests_per_minute`, default 120, `0` disables):
+  one sliding-window quota for all authenticated requests, mirroring the
+  userscript bridge policy; exhaustion answers `429` with a `rate_limited`
+  envelope and a `Retry-After` header. Unauthenticated requests never consume
+  quota. Documented in `/v1/openapi.json`.
 
 Firefox extension
 
@@ -94,7 +108,7 @@ Config, docs, tests
   sections the engine reads; every version string unified at 0.2.0.
 - New docs: [TAMPERMONKEY.md](docs/TAMPERMONKEY.md) and [MV3.md](docs/MV3.md).
 - Example inputs for every plugin and a ready-to-edit Tampermonkey userscript.
-- **330 Python unit tests, 28 extension logic checks, 18 end-to-end smoke
+- **376 Python unit tests, 28 extension logic checks, 18 end-to-end smoke
   checks**, including new suites for the API, cache, CLI, bridge, capabilities,
   streaming, task registry, priorities, warm-up and the six new plugins;
   pure-Python PNG/JPEG fixtures.

@@ -73,7 +73,9 @@ Only these actions exist: `badge`, `class`, `attribute`, `hide`, `show`, `text`.
 * The optional HTTP API binds to `127.0.0.1`, requires a 32-byte bearer token
   (`0600` file) and emits **no CORS headers**, so a webpage cannot use it. The
   optional Unix-socket transport (`api.unix_socket`) is a filesystem path with
-  the same token check.
+  the same token check. Authenticated requests share a sliding-window quota
+  (`api.max_requests_per_minute`, §6) so a runaway local client cannot flood
+  the engine.
 
 ### 6. Resource limits
 
@@ -87,6 +89,7 @@ Only these actions exist: `badge`, `class`, `attribute`, `hide`, `show`, `text`.
 | native incoming frame | 64 MiB | bounds what the host will read |
 | `bridge.max_input_bytes` | 256 KiB | per-request cap for page-supplied input |
 | `bridge.max_requests_per_minute` | 30 | sliding-window rate limit per page |
+| `api.max_requests_per_minute` | 120 | sliding-window quota for authenticated HTTP API requests (0 disables); 429 + `Retry-After` |
 | bridge in-flight tasks | 2 | hard concurrency cap, not configurable |
 | `max_items` / `maxItems` | 200 | bounds DOM work per task |
 | `ollama.idle_unload_seconds` | 300 s | frees unified memory |

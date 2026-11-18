@@ -30,8 +30,9 @@ here.
 * **Filesystem / network capability vocabulary.** Only the `llm.*` capabilities
   are enforced so far; `fs.*` / `net.*` declarations would need real mediation
   in the runtime, not just a manifest check.
-* **Additional backends** behind the same interface (llama.cpp server, MLX,
-  LM Studio) — plugins would not change at all.
+* **Native MLX backend.** The OpenAI-compatible backend (llama.cpp server,
+  LM Studio) shipped in 0.2.0 via `ollama.backend`; a native MLX client would
+  still need its own transport behind the same interface.
 * **Signed plugin manifests** so a plugin's provenance can be checked at
   discovery time.
 
@@ -40,8 +41,6 @@ here.
 * **API stability guarantees** for `/v1` (today it is experimental and opt-in),
   plus published, versioned Python/JS client libraries — the current clients are
   examples (`examples/use_http_api.py`, `examples/use_engine.py`).
-* **API quotas / rate limiting** for local clients, mirroring what the userscript
-  bridge already enforces.
 * **Chrome Web Store / AMO packaging** for the MV3 builds, including a stable
   extension id so the native-host `allowed_origins` entry does not change.
 

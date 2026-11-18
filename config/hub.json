@@ -19,6 +19,8 @@
     "node": "node"
   },
   "ollama": {
+    "backend": "ollama",
+    "api_key": "",
     "binary": "auto",
     "host": "127.0.0.1",
     "port": 11434,
@@ -71,6 +73,7 @@
     "allowed_origins": [],
     "allow_token_query": true,
     "sse_keepalive_seconds": 15,
+    "max_requests_per_minute": 120,
     "unix_socket": ""
   },
   "bridge": {

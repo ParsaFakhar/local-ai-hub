@@ -26,8 +26,23 @@ from typing import Any
 from .. import paths, schema
 from ..logging_util import get_logger
 from .ollama import OllamaClient, OllamaError
+from .openai_backend import OpenAICompatClient
 
 log = get_logger("models")
+
+# ollama.backend values -> canonical backend.  "openai" means any
+# OpenAI-compatible server (llama.cpp llama-server, LM Studio, ...).
+_BACKEND_ALIASES = {
+    "ollama": "ollama",
+    "openai": "openai",
+    "openai-compatible": "openai",
+    "openai_compatible": "openai",
+    "llama.cpp": "openai",
+    "llamacpp": "openai",
+    "llama-cpp": "openai",
+    "lmstudio": "openai",
+    "lm-studio": "openai",
+}
 
 _BINARY_CANDIDATES = (
     "/opt/homebrew/bin/ollama",
@@ -100,13 +115,28 @@ class ModelManager:
     def __init__(self, config, on_event=None):
         self.config = config
         self.on_event = on_event
-        self.client = OllamaClient(
-            host=config.get("ollama.host", "127.0.0.1"),
-            port=int(config.get("ollama.port", 11434)),
-            timeout=float(config.get("ollama.request_timeout_seconds", 240)),
-        )
+        backend = str(config.get("ollama.backend", "ollama") or "ollama").strip().lower()
+        if backend not in _BACKEND_ALIASES:
+            raise ModelError(
+                f"unknown ollama.backend {backend!r} (use 'ollama' or 'openai')",
+                "config_error",
+            )
+        self.backend = _BACKEND_ALIASES[backend]
+        host = config.get("ollama.host", "127.0.0.1")
+        port = int(config.get("ollama.port", 11434))
+        timeout = float(config.get("ollama.request_timeout_seconds", 240))
+        if self.backend == "openai":
+            self.client = OpenAICompatClient(
+                host=host,
+                port=port,
+                timeout=timeout,
+                api_key=str(config.get("ollama.api_key", "") or ""),
+            )
+        else:
+            self.client = OllamaClient(host=host, port=port, timeout=timeout)
         self.mock = bool(config.get("ollama.mock", False))
-        self.binary = find_binary(config.get("ollama.binary", "auto"))
+        # External backends are managed by the user; there is nothing to find.
+        self.binary = find_binary(config.get("ollama.binary", "auto")) if self.backend == "ollama" else None
         self._process: subprocess.Popen | None = None
         self.started_by_hub = False
         self._lock = threading.RLock()
@@ -150,6 +180,13 @@ class ModelManager:
             return
         if self.client.is_alive():
             return
+        if self.backend != "ollama":
+            raise ModelError(
+                f"openai-compatible server not reachable at {self.client.base_url}. "
+                "Start it yourself (e.g. llama-server or LM Studio) and set "
+                "ollama.host/ollama.port; auto_start only applies to Ollama.",
+                "model_unavailable",
+            )
         with self._lock:
             if self.client.is_alive():
                 return
@@ -544,7 +581,7 @@ class ModelManager:
             except OllamaError:
                 running = []
         return {
-            "backend": "mock" if self.mock else "ollama",
+            "backend": "mock" if self.mock else self.backend,
             "binary": self.binary,
             "base_url": self.client.base_url,
             "running": alive,

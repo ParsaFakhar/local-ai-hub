@@ -65,8 +65,9 @@ data only ([TAMPERMONKEY.md](TAMPERMONKEY.md)).
 | `domains.py` | Domain registry, specificity chain (`*` → parent → exact), extension overrides |
 | `plugins/manager.py` | Discovery, manifest validation (id, runtime, entry containment) |
 | `runtime/runner.py` | Subprocess execution, stdio RPC, timeouts, output caps, LLM call caps, `llm.token` streaming frames |
-| `models/manager.py` | Ollama discovery, on-demand start, model resolution, opt-in warm-up (async preload), idle unload, streaming, mock backend |
+| `models/manager.py` | Backend switch (`ollama.backend`), Ollama discovery + on-demand start, model resolution, opt-in warm-up (async preload), idle unload, streaming, mock backend |
 | `models/ollama.py` | Stdlib HTTP client (`/api/generate`, `/api/chat`, `/api/tags`, `/api/ps`); empty-prompt `load`/`unload` |
+| `models/openai_backend.py` | Stdlib OpenAI-compatible client (`/v1/models`, `/v1/chat/completions`, SSE); `response_format` schemas, image data-URIs, 1-token warm-up load, optional bearer token |
 | `capabilities.py` | Per-plugin `llm.*` capability checks before every model call |
 | `tasks.py` | Priority intake queue (`TaskQueue`), running-task registry, cancellation (running or queued), bounded history, JSONL audit log (input hashes) |
 | `cache.py` | Result cache: sha256 cache key, TTL, LRU entry cap, hit metadata |
@@ -74,6 +75,31 @@ data only ([TAMPERMONKEY.md](TAMPERMONKEY.md)).
 | `schema.py` | JSON-Schema subset validation, defaults, sample generation |
 | `api.py` | Opt-in token-authenticated localhost HTTP API, SSE events, optional Unix socket |
 | `client.py` | Client used by the CLI to talk to a running API (`--remote`) |
+
+**Model backends.** `ollama.backend` picks the transport behind
+`ModelManager`; plugins, protocol frames and SDKs never see the difference:
+
+| backend | server | lifecycle |
+| ------- | ------ | --------- |
+| `ollama` (default) | Ollama | hub auto-starts `ollama serve`, loads/unloads with empty prompts |
+| `openai` (aliases `llama.cpp`, `llamacpp`, `lmstudio`, `lm-studio`, `openai-compatible`) | any OpenAI-compatible server, e.g. llama.cpp `llama-server` or LM Studio | user-managed: no auto-start, no unload, `keep_alive` ignored |
+
+```json
+{ "ollama": { "backend": "openai", "host": "127.0.0.1", "port": 1234,
+              "api_key": "", "default_model": "qwen2.5-7b-instruct" } }
+```
+
+Set `ollama.port` to the server's port (LM Studio defaults to 1234;
+`llama-server` defaults to 9931 in recent releases, 8080 in older builds —
+check its startup output); `ollama.api_key` is sent as `Authorization: Bearer …`
+when non-empty. The client maps `fmt` to `response_format` (`json_object` /
+`json_schema` — both servers support schema-constrained output), converts
+Ollama-style base64 `images` into `data:` URI content parts, and maps sampling
+options (`temperature`, `top_p`, `seed`, `stop`, `num_predict` → `max_tokens`;
+`num_ctx` / `top_k` are server-startup settings there and are dropped).
+Warm-up is a 1-token completion; `running()` has no standard endpoint, so
+`loaded_models` reflects the hub's own usage tracking.
+`status.models.backend` reports `mock`, `ollama` or `openai`.
 
 ### 4. Plugin system (`plugins/`, `sdk/`)
 
@@ -104,7 +130,7 @@ background ──native frame──▶ host ──▶ Engine.handle ────
                                           cache lookup (if enabled)
                                                         ▼
                                           run_plugin(subprocess)
-                                            ├── llm.request → capabilities → ModelManager → Ollama
+                                            ├── llm.request → capabilities → ModelManager → Ollama / OpenAI-compatible
                                             ├── llm.token → SDK on_token; model.token → interface
                                             ├── progress/log → events → Firefox
                                             └── result{output}
@@ -140,7 +166,7 @@ Still open: API stability guarantees and published client libraries (see
 | Host not installed | Extension shows an actionable notice; requests fail fast with instructions |
 | Host dies mid-task | Pending promises reject, port reconnects with exponential backoff (max 30 s) |
 | Worker/event page suspended (MV3) | 30 s keep-alive alarm reconnects and sweeps lost deadlines; in-flight requests fail cleanly |
-| Ollama missing/stopped | Started on demand; clear `model_unavailable` error with install/pull hint |
+| Ollama missing/stopped | Started on demand; clear `model_unavailable` error with install/pull hint (openai backend: start the server yourself — the error says so) |
 | Model tag missing | Fallback list, then an explicit `ollama pull <tag>` message |
 | Plugin crashes | `plugin_failed` + stderr tail in `error.details` |
 | Plugin hangs | `plugin_timeout`, process terminated then killed |
