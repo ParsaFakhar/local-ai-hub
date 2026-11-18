@@ -245,6 +245,9 @@ class ModelManager:
 
     def resolve_model(self, requested: str | None) -> str:
         wanted = requested or self.default_model
+        if self.mock:
+            # The offline backend can "run" any tag; never fail resolution.
+            return wanted
         available = self.installed_models()
         if not available or wanted in available:
             return wanted
@@ -559,8 +562,11 @@ class ModelManager:
                     self.client.unload(name)
                     self._emit("model.unloaded", {"model": name, "reason": "idle"})
 
-        self._reaper = threading.Thread(target=loop, name="ollama-idle-reaper", daemon=True)
-        self._reaper.start()
+        with self._lock:
+            if self._reaper is not None:
+                return
+            self._reaper = threading.Thread(target=loop, name="ollama-idle-reaper", daemon=True)
+            self._reaper.start()
 
     def unload_all(self) -> list[str]:
         with self._lock:

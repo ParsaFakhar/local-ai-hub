@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1 — correctness fixes and bridge-override sync
+
+- Fixed: Review toggle no longer shares `data-role="review"` with the review
+  list (`review-toggle`); request timeout default raised to 600 s to outlast the
+  slowest bundled plugins, with a one-time migration of the pinned 240 s legacy
+  default; a failed native handshake closes the half-open port and stale-port
+  events can no longer trigger duplicate reconnects.
+- Fixed: domain overrides edited in Settings → Domains — including the
+  userscript-bridge opt-in — are synced to the host (`domains.set_overrides`,
+  full-map replace, in memory, capped at 200 domains / 256 KiB, gated by
+  `domains.allow_extension_overrides`). The engine's bridge re-check and
+  `domains.get` honor them; `domains.get` reports `from_file` / `from_override`.
+- Fixed: a full native intake queue answers `rate_limited` instead of blocking
+  the reader thread (cancel/ping/status stay responsive); the HTTP API no longer
+  serializes requests behind a global lock; an unexpected task failure no longer
+  leaves the task registered as running; the mock model backend accepts any
+  explicit model tag.
+- Metadata: `alarms` permission declared for the MV2 keep-alive; Firefox
+  `data_collection_permissions: {"required": ["none"]}` (nothing leaves the
+  machine); version 0.2.1 for extension + engine (plugin manifests stay 0.2.0).
+
 ## 0.2.0 — from prototype to platform
 
 Engine

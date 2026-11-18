@@ -157,6 +157,17 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["output"]["summary"]["labels"])
 
+    def test_unexpected_error_does_not_leak_a_running_task(self):
+        from unittest import mock
+        import hub.engine as engine_module
+        with mock.patch.object(engine_module, "run_plugin", side_effect=RuntimeError("boom")):
+            result = self.engine.handle({"type": "task", "plugin": "hello.python",
+                                         "input": {"name": "x"}, "id": "leak-1"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "internal_error")
+        self.assertEqual(self.engine.tasks.get("leak-1")["state"], "failed")
+        self.assertEqual(self.engine.tasks.counters()["running"], 0)
+
     def _temp_plugin(self, directory, body, **manifest_extra):
         import json
         from pathlib import Path

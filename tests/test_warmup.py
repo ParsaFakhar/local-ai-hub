@@ -159,6 +159,13 @@ class MockWarmupTests(unittest.TestCase):
         manager.warmup(block=True)
         self.assertEqual(manager.status()["warmup"]["state"], "ready")
 
+    def test_mock_accepts_any_explicit_tag(self):
+        manager = make_manager(default_model="a", vision_model="v")
+        self.assertEqual(manager.resolve_model("other:tag"), "other:tag")
+        result = manager.generate("hi", model="other:tag")
+        self.assertEqual(result["model"], "other:tag")
+        self.assertTrue(result["mock"])
+
 
 class RealBackendWarmupTests(unittest.TestCase):
     def test_load_uses_configured_keep_alive_and_timeout(self):

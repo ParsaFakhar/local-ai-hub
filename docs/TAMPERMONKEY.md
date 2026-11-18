@@ -19,6 +19,11 @@ data**, nothing else.
 2. The site is **explicitly opted in** by you, in `config/domains/<host>.json`
    or in **Settings → Domains**. Without the opt-in the bridge is completely
    silent: no reply, no error, no way to detect the extension.
+
+   An opt-in saved in Settings → Domains is pushed to the host on connect and
+   after every save, so the engine-side re-check (§5) honors it exactly like a
+   file opt-in. Overrides live in the host's memory only and are re-sent on each
+   connect; `domains.allow_extension_overrides: false` disables the sync.
 3. A userscript manager (Tampermonkey, Violentmonkey) running your script on
    that site.
 

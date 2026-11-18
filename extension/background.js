@@ -52,9 +52,25 @@ function broadcast(message) {
 // ---------------------------------------------------------------------------
 // storage
 // ---------------------------------------------------------------------------
+// Settings schema history:
+//   1 -> 0.2.0 (requestTimeoutMs default 240000)
+//   2 -> 0.2.1 (requestTimeoutMs default 600000; bundled plugins declare 600 s)
+const SETTINGS_SCHEMA = 2;
+
 async function loadSettings() {
   const stored = await browser.storage.local.get(['settings', 'domains']);
-  state.settings = Object.assign({}, LAH.DEFAULT_SETTINGS, stored.settings || {});
+  const settings = Object.assign({}, LAH.DEFAULT_SETTINGS, stored.settings || {});
+  if ((settings.schemaVersion || 1) < SETTINGS_SCHEMA) {
+    // 0.2.0 persisted the entire settings object on every save, pinning the
+    // old 240000 ms default. Raise only that exact legacy value; a custom
+    // timeout is preserved. The marker makes this one-time.
+    if (settings.requestTimeoutMs === 240000) {
+      settings.requestTimeoutMs = LAH.DEFAULT_SETTINGS.requestTimeoutMs;
+    }
+    settings.schemaVersion = SETTINGS_SCHEMA;
+    await browser.storage.local.set({ settings });
+  }
+  state.settings = settings;
   state.domains = stored.domains || {};
 }
 
@@ -72,6 +88,7 @@ async function saveDomainOverrides(domain, overrides) {
     state.domains[domain] = overrides;
   }
   await browser.storage.local.set({ domains: state.domains });
+  await pushDomainOverrides();
   return state.domains[domain] || null;
 }
 
@@ -109,6 +126,24 @@ function dropPort() {
   }
 }
 
+/** Push the FULL override map to the host (replace semantics). The host keeps
+ *  it in memory only, so it is re-sent on every connect. Only the Settings UI
+ *  writes state.domains; page data never reaches this path. */
+function pushDomainOverrides() {
+  if (!state.connected || !state.port) return Promise.resolve(null);
+  return rawRequest(LAH.controlRequest('domains.set_overrides', { overrides: state.domains }), 10000)
+    .then((response) => {
+      if (!response.ok) {
+        logLine('error', 'host rejected domain overrides', (response.error || {}).message);
+      }
+      return response;
+    })
+    .catch((error) => {
+      logLine('error', 'domain override sync failed', LAH.errorMessage(error));
+      return null;
+    });
+}
+
 function connect() {
   if (state.connected || state.connecting) return;
   // Never leave a half-open port behind: a failed handshake (host busy, ping
@@ -129,6 +164,7 @@ function connect() {
   state.port = port;
 
   port.onMessage.addListener((message) => {
+    if (port !== state.port) return; // stale port: replaced by a newer connection
     if (!message || typeof message !== 'object') return;
     if (message.type === 'event') {
       handleHostEvent(message);
@@ -142,6 +178,7 @@ function connect() {
   });
 
   port.onDisconnect.addListener(() => {
+    if (port !== state.port) return; // stale port: already dropped/replaced
     const error = port.error || browser.runtime.lastError;
     state.connected = false;
     state.connecting = false;
@@ -167,13 +204,19 @@ function connect() {
       setBadge();
       broadcast({ kind: KIND.STATUS, status: publicStatus() });
       refreshHostStatus(true);
+      pushDomainOverrides();
     })
     .catch((error) => {
       state.connecting = false;
       state.connected = false;
       state.lastError = LAH.errorMessage(error);
       logLine('error', 'host handshake failed', state.lastError);
+      // A ping timeout leaves the port (and host process) alive: close it.
+      // The stale-port guards above keep this from triggering a second retry.
+      dropPort();
+      rejectAllPending(`host handshake failed: ${state.lastError}`);
       setBadge();
+      broadcast({ kind: KIND.STATUS, status: publicStatus() });
       scheduleRetry();
     });
 }
@@ -300,7 +343,12 @@ async function domainConfig(domain) {
     }
   }
   merged.domain = domain;
-  merged.source = { file: Boolean(base.features && Object.keys(base.features).length), override: Boolean(overrides) };
+  merged.source = {
+    file: typeof base.from_file === 'boolean'
+      ? base.from_file
+      : Boolean(base.features && Object.keys(base.features).length),
+    override: Boolean(overrides) || Boolean(base.from_override),
+  };
   return merged;
 }
 

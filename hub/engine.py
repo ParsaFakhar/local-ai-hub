@@ -281,10 +281,40 @@ class Engine:
         overrides = request.get("overrides") if isinstance(request.get("overrides"), dict) else None
         config = self.domains.get(domain, overrides)
         config["available_plugins"] = [plugin.id for plugin in self.plugins.list()]
+        config["from_file"] = self.domains.has_file(domain)
+        config["from_override"] = self.domains.has_override(domain)
         # Resolved userscript-bridge policy: the content script uses this instead
         # of re-deriving the rules, so both sides always agree.
         config["bridge_policy"] = bridge.policy(config, self.config)
         return config
+
+    def _handle_domains_set_overrides(self, request: dict) -> dict:
+        """Replace the in-memory extension override map (Settings UI only).
+
+        Pushed by the background page on connect and after every save/delete.
+        Page-facing interfaces may never write configuration.
+        """
+        if self._is_page_interface((request.get("context") or {}).get("interface")):
+            return protocol.make_error(
+                request["id"], protocol.ErrorCode.FORBIDDEN,
+                "domain overrides may only be written by the extension Settings UI",
+            )
+        if not self.config.get("domains.allow_extension_overrides", True):
+            return protocol.make_error(
+                request["id"], protocol.ErrorCode.FORBIDDEN,
+                "extension overrides are disabled (domains.allow_extension_overrides = false)",
+            )
+        overrides = request.get("overrides")
+        if not isinstance(overrides, dict):
+            return protocol.make_error(
+                request["id"], protocol.ErrorCode.BAD_REQUEST,
+                "'overrides' must be an object mapping domain -> override object",
+            )
+        try:
+            stored = self.domains.set_overrides(overrides)
+        except ValueError as exc:
+            return protocol.make_error(request["id"], protocol.ErrorCode.BAD_REQUEST, str(exc))
+        return {"stored": stored}
 
     def _handle_models_list(self, request: dict) -> dict:
         return self.models.status()
@@ -570,59 +600,77 @@ class Engine:
             priority=priority,
         )
 
-        self._task_event(request_id, "task.started", {"plugin": plugin.id})
-        log.info("task %s -> %s (%s)", request_id, plugin.id, payload["context"]["domain"] or "no domain")
-
         try:
-            output = run_plugin(
-                plugin,
-                payload,
-                config=self.config,
-                llm_handler=llm_handler,
-                on_event=lambda name, data: self._task_event(request_id, name, data),
-                cancel_event=cancel_event,
-                timeout=self._requested_timeout(request),
-            )
-        except PluginRuntimeError as exc:
-            self._bump(ok=False)
+            self._task_event(request_id, "task.started", {"plugin": plugin.id})
+            log.info("task %s -> %s (%s)", request_id, plugin.id, payload["context"]["domain"] or "no domain")
+
+            try:
+                output = run_plugin(
+                    plugin,
+                    payload,
+                    config=self.config,
+                    llm_handler=llm_handler,
+                    on_event=lambda name, data: self._task_event(request_id, name, data),
+                    cancel_event=cancel_event,
+                    timeout=self._requested_timeout(request),
+                )
+            except PluginRuntimeError as exc:
+                self._bump(ok=False)
+                duration_ms = int((time.monotonic() - started) * 1000)
+                self.tasks.finish(
+                    request_id, ok=False, duration_ms=duration_ms, error=exc.message
+                )
+                log.warning("task %s failed: %s", request_id, exc.message)
+                self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": exc.message})
+                return protocol.make_error(request_id, exc.code, exc.message, exc.details)
+            except ModelError as exc:
+                self._bump(ok=False)
+                duration_ms = int((time.monotonic() - started) * 1000)
+                self.tasks.finish(request_id, ok=False, duration_ms=duration_ms, error=str(exc))
+                self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": str(exc)})
+                return protocol.make_error(request_id, exc.code, str(exc))
+
+            output_errors = schema.validate(output, plugin.output_schema)
+            if output_errors:
+                log.warning("plugin %s output violates its schema: %s", plugin.id, output_errors)
+
+            self._bump(ok=True)
             duration_ms = int((time.monotonic() - started) * 1000)
+            meta = {
+                "plugin": plugin.id,
+                "plugin_version": plugin.version,
+                "models": used_models,
+                "mock_model": self.models.mock,
+                "duration_ms": duration_ms,
+                "domain": payload["context"]["domain"],
+                "output_schema_errors": output_errors,
+                "input_hash": digest,
+                "priority": priority,
+            }
             self.tasks.finish(
-                request_id, ok=False, duration_ms=duration_ms, error=exc.message
+                request_id, ok=True, duration_ms=duration_ms, models=used_models
             )
-            log.warning("task %s failed: %s", request_id, exc.message)
-            self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": exc.message})
-            return protocol.make_error(request_id, exc.code, exc.message, exc.details)
-        except ModelError as exc:
-            self._bump(ok=False)
+            self.cache.put(key, output, meta)
+            self._task_event(request_id, "task.finished", {"plugin": plugin.id, "duration_ms": duration_ms})
+            log.info("task %s done in %d ms", request_id, duration_ms)
+            return protocol.make_result(request_id, output, meta)
+        except Exception as exc:  # noqa: BLE001 - cleanup, then let handle() answer
+            # Unexpected failure: never leave the task registered as running.
+            # The state check avoids a double finish if the error happened after
+            # a successful finish (e.g. cache.put). handle() builds the
+            # internal_error envelope and bumps error_count exactly once.
             duration_ms = int((time.monotonic() - started) * 1000)
-            self.tasks.finish(request_id, ok=False, duration_ms=duration_ms, error=str(exc))
-            self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": str(exc)})
-            return protocol.make_error(request_id, exc.code, str(exc))
-
-        output_errors = schema.validate(output, plugin.output_schema)
-        if output_errors:
-            log.warning("plugin %s output violates its schema: %s", plugin.id, output_errors)
-
-        self._bump(ok=True)
-        duration_ms = int((time.monotonic() - started) * 1000)
-        meta = {
-            "plugin": plugin.id,
-            "plugin_version": plugin.version,
-            "models": used_models,
-            "mock_model": self.models.mock,
-            "duration_ms": duration_ms,
-            "domain": payload["context"]["domain"],
-            "output_schema_errors": output_errors,
-            "input_hash": digest,
-            "priority": priority,
-        }
-        self.tasks.finish(
-            request_id, ok=True, duration_ms=duration_ms, models=used_models
-        )
-        self.cache.put(key, output, meta)
-        self._task_event(request_id, "task.finished", {"plugin": plugin.id, "duration_ms": duration_ms})
-        log.info("task %s done in %d ms", request_id, duration_ms)
-        return protocol.make_result(request_id, output, meta)
+            record = self.tasks.get(request_id)
+            if record is not None and record.get("state") == "running":
+                self.tasks.finish(
+                    request_id, ok=False, duration_ms=duration_ms,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                try:
+                    self._task_event(request_id, "task.failed", {"plugin": plugin.id, "error": str(exc)})
+                except Exception:  # noqa: BLE001 - cleanup must not mask the original error
+                    log.debug("task.failed event could not be emitted", exc_info=True)
+            raise
 
     # ------------------------------------------------------------------
     def shutdown(self) -> None:

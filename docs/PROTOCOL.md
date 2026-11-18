@@ -126,6 +126,7 @@ intake queue before it ever started (no result frame follows it).
 | `plugins.list` | `{plugins: [manifest summaries], errors: []}` |
 | `domains.list` | `{domains: [{domain, features, label}]}` |
 | `domains.get` | effective config for `domain` (+ `overrides`), plus `available_plugins` and the resolved `bridge_policy` |
+| `domains.set_overrides` | replaces the in-memory extension override map (`overrides: {domain: {...}}`, full-map replace); Settings UI only, capped at 200 domains / 256 KiB, honors `domains.allow_extension_overrides`; returns `{stored: n}` |
 | `models.list` | backend (`mock` / `ollama` / `openai`), running, loaded/installed models, default/vision model, `warmup` report |
 | `models.unload` | `{unloaded: [names]}` — frees memory immediately |
 | `models.warmup` | `{warmup: report}` — starts an asynchronous preload of `models` (list of names, optional; default is the configured warm-up set) and returns immediately |
@@ -136,8 +137,8 @@ intake queue before it ever started (no result frame follows it).
 | `cache.clear` | `{cleared: n, cache: stats}` |
 | `shutdown` | cleanup (unload models, optionally stop Ollama) then exit |
 
-`ping`, `status`, `shutdown`, `task.cancel`, `tasks.list` and `tasks.get` are
-**inline control types**: the native host answers them immediately instead of
+`ping`, `status`, `shutdown`, `task.cancel`, `tasks.list`, `tasks.get` and
+`domains.set_overrides` are **inline control types**: the native host answers them immediately instead of
 queueing them behind a running task, so a long classification never blocks a
 cancel or a status poll.
 
@@ -147,8 +148,9 @@ Waiting tasks are ordered by the engine's intake queue (`hub/tasks.py:TaskQueue`
 owned by `Engine.queue`, consumed by the native host's two workers):
 
 * highest `priority` first; ties keep arrival order (FIFO);
-* `tasks.queue_size` (default 64) bounds the queue — the host stops reading
-  frames while it is full, exactly as before priorities existed;
+* `tasks.queue_size` (default 64) bounds the queue — a full queue answers
+  `rate_limited` immediately; the reader thread never blocks, so inline
+  controls (ping/status/cancel) keep working;
 * `tasks.list` shows the waiting tasks as
   `{id, plugin, priority, queued_ms, position}`, next-to-run first;
 * `task.cancel` on a waiting id removes it, writes a cancelled record to the

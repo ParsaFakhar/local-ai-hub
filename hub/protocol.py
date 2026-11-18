@@ -25,7 +25,8 @@ Event (unsolicited, may arrive before the result)::
     {"protocol":"1.0","type":"event","event":"progress","id":"req-1","data":{...}}
 
 Control types: ``ping``, ``status``, ``plugins.list``, ``domains.get``,
-``domains.list``, ``models.list``, ``models.unload``, ``models.warmup``, ``config.get``,
+``domains.set_overrides``, ``domains.list``, ``models.list``, ``models.unload``,
+``models.warmup``, ``config.get``,
 ``tasks.list``, ``tasks.get``, ``task.cancel``, ``cache.clear``, ``shutdown``.
 """
 
@@ -48,6 +49,7 @@ CONTROL_TYPES = {
     "status",
     "plugins.list",
     "domains.get",
+    "domains.set_overrides",
     "domains.list",
     "models.list",
     "models.unload",
@@ -69,6 +71,8 @@ INLINE_CONTROL_TYPES = {
     "task.cancel",
     "tasks.list",
     "tasks.get",
+    # Cheap in-memory write; must not queue behind tasks (pushed on connect).
+    "domains.set_overrides",
 }
 
 

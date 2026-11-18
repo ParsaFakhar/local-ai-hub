@@ -45,6 +45,19 @@ class DomainTests(unittest.TestCase):
             self.registry.enabled_plugins("example-board.com"), ["comments.classify", "images.tag"]
         )
 
+    def test_override_bridge_merge_and_caps(self):
+        self.registry.set_overrides({"open.test": {"bridge": {"tampermonkey": True}}})
+        cfg = self.registry.get("open.test")
+        self.assertTrue(cfg["bridge"]["tampermonkey"])
+        self.assertTrue(self.registry.has_override("open.test"))
+        self.assertFalse(self.registry.has_file("open.test"))
+        with self.assertRaises(ValueError):
+            self.registry.set_overrides({"x.test": "not-a-dict"})
+        with self.assertRaises(ValueError):
+            self.registry.set_overrides({f"d{i}.test": {} for i in range(201)})
+        self.registry.set_overrides({})  # replace semantics clear the map
+        self.assertFalse(self.registry.has_override("open.test"))
+
 
 if __name__ == "__main__":
     unittest.main()

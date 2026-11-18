@@ -300,7 +300,6 @@ class RateLimiter:
 
 def _make_handler(config, engine, bus, token, doc_port: int = 8765):
     """Build the request handler around one engine (shared by both transports)."""
-    lock = threading.Lock()
     allowed_origins = {str(origin) for origin in (config.get("api.allowed_origins") or [])}
     allow_token_query = bool(config.get("api.allow_token_query", True))
     keepalive = float(config.get("api.sse_keepalive_seconds", 15))
@@ -422,8 +421,9 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
         def _control(self, kind: str, extra: dict | None = None) -> None:
             request = {"type": kind, "id": protocol.new_id("api")}
             request.update(extra or {})
-            with lock:
-                result = engine.handle(request)
+            # The engine is thread-safe (TaskRegistry/TaskQueue/ModelManager/
+            # cache locks); the native host already calls it concurrently.
+            result = engine.handle(request)
             self._reply(200 if result.get("ok") else _http_status(result), result)
 
         # -- routes -----------------------------------------------------
@@ -503,8 +503,7 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
                         400, protocol.ErrorCode.BAD_REQUEST, "'context' must be an object"
                     )
                 context.setdefault("interface", "http")
-                with lock:
-                    result = engine.handle(message)
+                result = engine.handle(message)
                 return self._reply(200 if result.get("ok") else 400, result)
 
             kind = POST_ROUTES.get(route)

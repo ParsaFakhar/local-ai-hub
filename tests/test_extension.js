@@ -508,6 +508,10 @@ test('manifest wires the bridge and the new commands', () => {
   });
 });
 
+test('request timeout default outlasts the slowest bundled plugins', () => {
+  assert.strictEqual(LAH.DEFAULT_SETTINGS.requestTimeoutMs, 600000);
+});
+
 (async () => {
   for (const [name, fn] of queue) {
     try {

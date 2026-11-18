@@ -1,12 +1,15 @@
 {
   "manifest_version": 2,
   "name": "Local AI Hub",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local, extensible AI automation platform. Runs plugins and local models through a native messaging host \u2014 no cloud services.",
   "browser_specific_settings": {
     "gecko": {
       "id": "local-ai-hub@localaihub.dev",
-      "strict_min_version": "115.0"
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "permissions": [
@@ -15,6 +18,7 @@
     "menus",
     "tabs",
     "activeTab",
+    "alarms",
     "<all_urls>"
   ],
   "background": {

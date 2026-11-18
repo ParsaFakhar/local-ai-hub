@@ -232,6 +232,20 @@ class EngineBridgeTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
+    def test_settings_override_opts_domain_in(self):
+        engine = self.engine()
+        try:
+            self.assertFalse(self.run_task(engine, "closed.test")["ok"])
+            reply = engine.handle({"type": "domains.set_overrides", "overrides": {
+                "closed.test": {"bridge": {"tampermonkey": True, "plugins": ["hello.python"]}}}})
+            self.assertTrue(reply["ok"], reply)
+            self.assertTrue(self.run_task(engine, "closed.test")["ok"])
+            forbidden = engine.handle({"type": "domains.set_overrides", "overrides": {},
+                                       "context": {"interface": "tampermonkey"}})
+            self.assertEqual(forbidden["error"]["code"], "forbidden")
+        finally:
+            engine.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

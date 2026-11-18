@@ -14,6 +14,7 @@ import socket
 import stat
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -279,6 +280,36 @@ class RouteTests(ServerTestCase):
 
     def test_get_on_a_post_route_is_404(self):
         self.assertEqual(self.call("GET", "/v1/cache/clear")[0], 404)
+
+
+class ConcurrentTaskTests(ServerTestCase):
+    def test_status_and_cancel_respond_while_a_task_runs(self):
+        import hub.engine as engine_module
+        original_run = engine_module.run_plugin
+
+        def slow_run(*args, **kwargs):
+            time.sleep(0.8)
+            return original_run(*args, **kwargs)
+
+        engine_module.run_plugin = slow_run
+        try:
+            worker = threading.Thread(
+                target=lambda: self.call("POST", "/v1/task",
+                                         {"plugin": "hello.python", "input": {"name": "slow"},
+                                          "id": "slow-1"}), daemon=True)
+            worker.start()
+            time.sleep(0.15)  # let the task register
+            started = time.monotonic()
+            code, status = self.call("GET", "/v1/status")
+            self.assertEqual(code, 200)
+            self.assertGreaterEqual(status["output"]["tasks"]["running"], 1)
+            code, reply = self.call("POST", "/v1/task/cancel", {"task_id": "slow-1"})
+            self.assertEqual(code, 200)
+            self.assertEqual(reply["output"]["cancelled"], ["slow-1"])
+            self.assertLess(time.monotonic() - started, 0.6)
+            worker.join(timeout=5)
+        finally:
+            engine_module.run_plugin = original_run
 
 
 class OpenAPITests(ServerTestCase):

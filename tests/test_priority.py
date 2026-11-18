@@ -426,6 +426,23 @@ class NativeHostQueueTests(unittest.TestCase):
         self.assertEqual(processed[0]["id"], "high")
         self.assertEqual(sorted(m["id"] for m in processed), ["high", "low", "mid"])
 
+    def test_enqueue_full_queue_answers_rate_limited(self):
+        engine = Engine(load_config({"ollama": {"mock": True},
+                                     "tasks": {"audit_log": False, "queue_size": 1}}))
+        host = self.host_module.NativeHost.__new__(self.host_module.NativeHost)
+        host._shutdown = threading.Event()
+        host.engine = engine
+        sent = []
+        host.send = sent.append
+        engine.queue.put({"type": "task", "id": "a", "plugin": "hello.python"})
+        host._enqueue(engine.queue, {"type": "task", "id": "b", "plugin": "hello.python"})
+        self.assertEqual(engine.queue.qsize(), 1)
+        self.assertEqual(len(sent), 1)
+        self.assertFalse(sent[0]["ok"])
+        self.assertEqual(sent[0]["error"]["code"], "rate_limited")
+        self.assertEqual(sent[0]["id"], "b")
+        engine.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,26 @@ class NativeHost:
             finally:
                 tasks.task_done()
 
+    def _enqueue(self, tasks: TaskQueue, message: dict) -> None:
+        """Hand a task to the workers without ever blocking the reader thread.
+
+        A full queue answers rate_limited immediately: blocking here would also
+        block the inline control types (ping/status/task.cancel) that are read
+        on this same thread.
+        """
+        try:
+            tasks.put(message, timeout=0)
+        except queue.Full:
+            request_id = message.get("id") if isinstance(message, dict) else None
+            self.send(
+                protocol.make_error(
+                    request_id or "-",
+                    protocol.ErrorCode.RATE_LIMITED,
+                    f"task queue is full ({tasks.qsize()} waiting); retry shortly",
+                    {"queued": tasks.qsize(), "queue_size": tasks.maxsize},
+                )
+            )
+
     # ------------------------------------------------------------------
     def run(self) -> int:
         log.info("native host started (pid %d, root %s)", os.getpid(), _ROOT)
@@ -128,7 +148,7 @@ class NativeHost:
                     # (task.cancel in particular must not queue behind its own task)
                     self._process(message)
                 else:
-                    tasks.put(message)
+                    self._enqueue(tasks, message)
         except KeyboardInterrupt:
             log.info("interrupted")
         finally:

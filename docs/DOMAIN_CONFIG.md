@@ -17,6 +17,12 @@ Merge order (later wins): `*` defaults → parent domain → exact host → exte
 Set `"domains": {"allow_extension_overrides": false}` in `hub.json` to make file
 configs authoritative.
 
+Overrides are synced to the native host on every connect and after every
+save/delete (`domains.set_overrides`, full-map replace). The host keeps them
+**in memory only** and applies them to both `features` and `bridge`, so a bridge
+opt-in edited here is enforced by the engine exactly like a file opt-in. With
+`allow_extension_overrides: false` the host rejects the sync.
+
 ## Full example
 
 ```json
