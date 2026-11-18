@@ -97,8 +97,23 @@ function rejectAllPending(reason) {
   state.pending.clear();
 }
 
+/** Close the current port (if any) without triggering the retry logic twice. */
+function dropPort() {
+  const port = state.port;
+  state.port = null;
+  if (!port) return;
+  try {
+    port.disconnect();
+  } catch (error) {
+    /* already gone */
+  }
+}
+
 function connect() {
   if (state.connected || state.connecting) return;
+  // Never leave a half-open port behind: a failed handshake (host busy, ping
+  // timeout) must not leak the previous port and its native host process.
+  dropPort();
   state.connecting = true;
   logLine('info', `connecting to native host "${HOST_NAME}"`);
   let port;

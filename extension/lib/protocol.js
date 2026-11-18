@@ -30,7 +30,10 @@
     autoConnect: true,
     showPanel: true,
     autoRun: false,
-    requestTimeoutMs: 240000,
+    // Must outlast the slowest bundled plugin (images.tag / moderation.queue /
+    // page.summarize / text.translate declare timeout_seconds: 600), otherwise
+    // the interface gives up while the host is still working on the task.
+    requestTimeoutMs: 600000,
     imageMaxSize: 768,
     imageQuality: 0.85,
     maxItems: 200,

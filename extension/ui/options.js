@@ -475,7 +475,7 @@ async function loadSettings() {
   $('set-debug').checked = Boolean(state.settings.debug);
   $('set-dryRun').checked = Boolean(state.settings.dryRun);
   $('set-review').checked = Boolean(state.settings.review);
-  $('set-requestTimeout').value = Math.round((state.settings.requestTimeoutMs || 240000) / 1000);
+  $('set-requestTimeout').value = Math.round((state.settings.requestTimeoutMs || LAH.DEFAULT_SETTINGS.requestTimeoutMs) / 1000);
   $('set-maxItems').value = state.settings.maxItems || 200;
   $('set-imageMaxSize').value = state.settings.imageMaxSize || 768;
   $('set-imageQuality').value = state.settings.imageQuality || 0.85;
@@ -489,7 +489,7 @@ $('save-settings').addEventListener('click', async () => {
     debug: $('set-debug').checked,
     dryRun: $('set-dryRun').checked,
     review: $('set-review').checked,
-    requestTimeoutMs: Math.max(10, Number($('set-requestTimeout').value) || 240) * 1000,
+    requestTimeoutMs: Math.max(10, Number($('set-requestTimeout').value) || LAH.DEFAULT_SETTINGS.requestTimeoutMs / 1000) * 1000,
     maxItems: Math.max(1, Number($('set-maxItems').value) || 200),
     imageMaxSize: Math.max(128, Number($('set-imageMaxSize').value) || 768),
     imageQuality: Math.min(1, Math.max(0.3, Number($('set-imageQuality').value) || 0.85)),

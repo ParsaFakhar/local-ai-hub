@@ -144,7 +144,7 @@
         </div>
         <div class="actions">
           <button class="toggle" data-role="dry-run" title="Plan only, change nothing">Dry run</button>
-          <button class="toggle" data-role="review" title="Approve each item before applying">Review</button>
+          <button class="toggle" data-role="review-toggle" title="Approve each item before applying">Review</button>
           <button data-role="pick" title="Click an element to build a selector">Pick selector</button>
         </div>
         <div class="bar"><i data-role="bar"></i></div>
@@ -167,7 +167,7 @@
       runAll: shadow.querySelector('[data-role=run-all]'),
       cancel: shadow.querySelector('[data-role=cancel]'),
       dryRun: shadow.querySelector('[data-role=dry-run]'),
-      reviewToggle: shadow.querySelector('[data-role=review]'),
+      reviewToggle: shadow.querySelector('[data-role=review-toggle]'),
       pick: shadow.querySelector('[data-role=pick]'),
     };
     ui.domain.textContent = state.domain;
