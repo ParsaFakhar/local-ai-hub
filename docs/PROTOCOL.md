@@ -1,6 +1,7 @@
 # Universal task protocol v1.0
 
-One protocol, every interface: Firefox native messaging, CLI, Python, HTTP.
+One protocol, every interface: Firefox native messaging, userscript bridge, CLI,
+Python, HTTP.
 
 ## Envelopes
 
@@ -29,6 +30,11 @@ One protocol, every interface: Firefox native messaging, CLI, Python, HTTP.
 * `options` — plugin config overrides (trusted UI/caller only).
 * `context.domain_config` — extension-side override, merged over file config.
   Only accepted from the extension, never from a webpage.
+* `context.interface` — who is calling. **Page-facing interfaces**
+  (`tampermonkey`, `userscript`, `page`, `web`; configurable via
+  `security.page_interfaces`) may send `input` only: the engine drops their
+  `options` and `domain_config` and re-checks the domain's bridge policy
+  (`bridge.require_domain_opt_in`). See [TAMPERMONKEY.md](TAMPERMONKEY.md).
 
 ### Result
 
@@ -51,6 +57,9 @@ One protocol, every interface: Firefox native messaging, CLI, Python, HTTP.
 }
 ```
 
+When the result cache is enabled and hits, `meta.cache` carries
+`{hit: true, age_ms, key}` (the first 16 hex chars of the cache key).
+
 ### Error
 
 ```json
@@ -63,18 +72,25 @@ One protocol, every interface: Firefox native messaging, CLI, Python, HTTP.
 
 | Code | Meaning |
 | ---- | ------- |
-| `bad_request` | Malformed envelope |
+| `bad_request` | Malformed envelope or control argument |
 | `unknown_type` | Unsupported message type |
 | `unknown_plugin` | Plugin id not registered |
 | `plugin_disabled` | Feature disabled for this domain |
 | `invalid_input` | Input violates the manifest schema |
-| `input_too_large` | Over `security.max_input_bytes` |
+| `input_too_large` | Over `security.max_input_bytes` (or the bridge's own cap) |
 | `plugin_failed` | Plugin crashed / returned failure |
 | `plugin_timeout` | Exceeded the plugin/task timeout |
 | `runtime_missing` | python/node interpreter unavailable |
 | `model_error` | Inference failed |
 | `model_unavailable` | Ollama missing, stopped, or model not installed |
-| `message_too_large` | Result exceeds the 1 MiB native messaging limit |
+| `capability_denied` | The plugin used an `llm.*` capability it never declared |
+| `task_cancelled` | The task was cancelled before it finished |
+| `unknown_task` | `tasks.get` / cancel target is neither running nor in history |
+| `message_too_large` | Frame exceeds the native messaging caps (1 MiB out / 64 MiB in) |
+| `forbidden` | Bridge policy denies this domain/plugin, or `apply` is not allowed |
+| `rate_limited` | Too many bridge requests per minute, or too many in flight |
+| `unauthorized` | HTTP API: missing/invalid bearer token |
+| `not_found` | HTTP API: unknown route or object |
 | `internal_error` | Unexpected engine error (logged with traceback) |
 
 ### Event (unsolicited)
@@ -85,8 +101,13 @@ One protocol, every interface: Firefox native messaging, CLI, Python, HTTP.
 ```
 
 Events: `host.ready`, `task.started`, `task.finished`, `task.failed`,
-`progress`, `plugin.log`, `model.server_starting`, `model.server_ready`,
-`model.generating`, `model.unloaded`.
+`task.cancelling`, `progress`, `plugin.log`, `model.server_starting`,
+`model.server_ready`, `model.generating`, `model.token`, `model.unloaded`.
+
+`model.token` carries coalesced streaming fragments as
+`{plugin, text}` and is emitted only while streaming is active (`ollama.stream`,
+a per-call `stream` flag, or a plugin using `on_token`). `task.cancelling` carries
+`{id}` and precedes the cancelled task's result.
 
 ## Control messages
 
@@ -96,11 +117,20 @@ Events: `host.ready`, `task.started`, `task.finished`, `task.failed`,
 | `status` | uptime, plugin/domain counts, task counters, full model status, config sources |
 | `plugins.list` | `{plugins: [manifest summaries], errors: []}` |
 | `domains.list` | `{domains: [{domain, features, label}]}` |
-| `domains.get` | effective config for `domain` (+ `overrides`), plus `available_plugins` |
+| `domains.get` | effective config for `domain` (+ `overrides`), plus `available_plugins` and the resolved `bridge_policy` |
 | `models.list` | backend, running, loaded/installed models, default/vision model |
 | `models.unload` | `{unloaded: [names]}` — frees memory immediately |
 | `config.get` | effective hub config + sources |
+| `tasks.list` | running tasks, recent history (`limit`) and counters |
+| `tasks.get` | `{task: record}` for `task_id`, running or recent; `unknown_task` otherwise |
+| `task.cancel` | `{cancelled: [ids]}`; `task_id: "*"` (or omitted) cancels everything and adds `all: true`; an unknown id returns `{cancelled: [], unknown_task: id}` |
+| `cache.clear` | `{cleared: n, cache: stats}` |
 | `shutdown` | cleanup (unload models, optionally stop Ollama) then exit |
+
+`ping`, `status`, `shutdown`, `task.cancel`, `tasks.list` and `tasks.get` are
+**inline control types**: the native host answers them immediately instead of
+queueing them behind a running task, so a long classification never blocks a
+cancel or a status poll.
 
 ## Transport: native messaging
 
@@ -108,9 +138,10 @@ Events: `host.ready`, `task.started`, `task.finished`, `task.failed`,
 [4 bytes: uint32 little-endian length][UTF-8 JSON payload]
 ```
 
-* host → Firefox: **max 1 MiB per message** (enforced by the engine)
-* Firefox → host: large inputs allowed, but `security.max_input_bytes` (4 MiB
-  default) applies to `input`
+* host → browser: **max 1 MiB per message** (browser hard limit; enforced by
+  `hub/protocol.py`, which returns `message_too_large` instead of breaking the pipe)
+* browser → host: frames up to **64 MiB** are read; `security.max_input_bytes`
+  (4 MiB default) still applies to `input`
 
 Practical consequence: batch comments and downscale images (the extension
 defaults to 768 px JPEG q0.85, typically 50–150 KB each).
@@ -128,7 +159,9 @@ engine → plugin  {"type":"invoke","protocol":"1.0","task_id":"…",
 
 plugin → engine  {"type":"llm.request","id":"1","method":"generate",
                   "params":{"prompt":"…","system":"…","images":["<base64>"],
-                            "format":{…schema…},"model":null,"options":{…}}}
+                            "format":{…schema…},"model":null,"options":{…},
+                            "stream":false}}
+engine → plugin  {"type":"llm.token","id":"1","text":"partial","index":0}   (streaming only)
 engine → plugin  {"type":"llm.response","id":"1","ok":true,
                   "result":{"text":"…","model":"qwen3.5:4b","mock":false,"duration_ms":742}}
 
@@ -145,12 +178,19 @@ Rules:
 * stdout carries **only** these frames (the Python SDK redirects `print` to stderr)
 * one `result` frame ends the task; the process is then reaped
 * the engine enforces wall-clock timeout, output byte cap and LLM call cap
+* **capabilities are checked before every model call**: `images` needs
+  `llm.vision`, `format` needs `llm.structured`, and any model access needs
+  `llm.generate` / `llm.chat` / `llm.vision`. Denials come back as a failed
+  `llm.response` and surface as `capability_denied`.
+* streaming: pass `on_token=fn` (Python) / `onToken` (JS) or `stream: true`.
+  `llm.token` frames deliver raw fragments to the plugin (capped at 20 000 frames
+  per call); the engine separately coalesces them into `model.token` events for
+  the interface. The final `llm.response` still carries the complete text.
 
 ## Transport: HTTP (experimental, opt-in)
 
 ```bash
-./install.sh --api
-./bin/laihub-api
+./install.sh --api          # or: ./bin/laihub serve
 TOKEN=$(cat ~/Library/Application\ Support/LocalAIHub/api-token)
 
 curl -s http://127.0.0.1:8765/v1/status -H "Authorization: Bearer $TOKEN"
@@ -158,5 +198,44 @@ curl -s http://127.0.0.1:8765/v1/task -H "Authorization: Bearer $TOKEN" \
      -d '{"plugin":"hello.python","input":{"name":"curl"}}'
 ```
 
-Routes: `GET /v1/status|plugins|domains|models`, `POST /v1/task`.
-Localhost only, bearer token, no CORS.
+| Method | Route | Purpose |
+| ------ | ----- | ------- |
+| GET | `/v1/ping` | liveness + version |
+| GET | `/v1/status` | engine status |
+| GET | `/v1/plugins` | manifest summaries |
+| GET | `/v1/domains`, `/v1/domains/<domain>` | configured domains / effective config |
+| GET | `/v1/models` | model backend status |
+| GET | `/v1/config` | effective hub config |
+| GET | `/v1/tasks`, `/v1/tasks/<id>` | running + recent history / one task |
+| GET | `/v1/events` | Server-Sent Events stream |
+| GET | `/v1/openapi.json` | machine-readable description |
+| POST | `/v1/task` | run a task (same envelope as above) |
+| POST | `/v1/task/cancel` | cancel one task or all |
+| POST | `/v1/models/unload` | free model memory |
+| POST | `/v1/cache/clear` | drop cached results |
+| POST | `/v1/shutdown` | clean shutdown |
+
+Localhost only, bearer token, **no CORS headers**. `api.allowed_origins` can
+restrict origins further; it is empty (no cross-origin access) by default.
+
+### Server-Sent Events
+
+```bash
+curl -N "http://127.0.0.1:8765/v1/events?access_token=$TOKEN"
+```
+
+The stream opens with `event: ready`, then forwards every engine event as
+`event: <name>` + `data: <JSON envelope>`, with a `: keepalive` comment every
+`api.sse_keepalive_seconds` (15 s). `EventSource` cannot set headers, so this
+route — and only this route — accepts `?access_token=…`, and only while
+`api.allow_token_query` is true.
+
+### Unix socket (optional)
+
+Set `api.unix_socket` to a path (e.g. `~/Library/Application Support/LocalAIHub/hub.sock`)
+to serve the same surface on an `AF_UNIX` socket. The token check is unchanged.
+
+```bash
+curl --unix-socket ~/Library/Application\ Support/LocalAIHub/hub.sock \
+     -H "Authorization: Bearer $TOKEN" http://localhost/v1/status
+```

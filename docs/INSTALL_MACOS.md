@@ -64,6 +64,11 @@ Vision tagging needs a vision-capable model. Set it separately if you like:
 
 ## 3. Load the extension
 
+> **MV3?** `python3 scripts/build_mv3.py` also builds Manifest V3 variants
+> (`dist/mv3-firefox`, `dist/mv3-chrome`). The Firefox one uses the same gecko id,
+> so the host registration below still works; Chrome needs its own native-host
+> manifest. See [MV3.md](MV3.md). The steps here are for the MV2 reference build.
+
 ### Temporary (development)
 
 1. `about:debugging#/runtime/this-firefox`

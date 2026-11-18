@@ -151,6 +151,39 @@ arrays are joined with `, `. Values are inserted as **text**, never markup.
 { "when": { "field": "nsfw", "truthy": true } }
 ```
 
+## Userscript bridge (`bridge`)
+
+A domain can expose selected plugins to a userscript (Tampermonkey /
+Violentmonkey). This is **off by default** and separate from `features`: enabling
+a feature for the panel does not expose it to the page.
+
+```json
+{
+  "domain": "example-board.com",
+  "bridge": {
+    "tampermonkey": true,
+    "plugins": ["comments.classify"],
+    "allow_apply": false,
+    "max_requests_per_minute": 30,
+    "max_input_bytes": 262144
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tampermonkey` | `false` | the opt-in; without it the bridge is silent on this site |
+| `plugins` | *(empty)* | allowlist of plugin ids; if empty, exactly the site's **enabled features** are exposed |
+| `allow_apply` | `false` | may the page ask to apply results (using *your* `apply` spec)? |
+| `max_requests_per_minute` | `30` | sliding-window rate limit per page |
+| `max_input_bytes` | `262144` | cap on the JSON-encoded page input |
+
+Hub-level `bridge.*` keys in `config/hub.json` (`enabled`,
+`require_domain_opt_in`, `allow_apply`, and the two limits) can only tighten this
+policy. The bridge section can also be edited in **Settings → Domains**. The page
+sends input data only — never options, selectors, actions or config. Protocol,
+error codes and a client example: [TAMPERMONKEY.md](TAMPERMONKEY.md).
+
 ## Styling
 
 `extension/content/content.css` defines `lah-badge` (with `data-tone` colours for

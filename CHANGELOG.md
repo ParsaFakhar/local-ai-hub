@@ -1,5 +1,95 @@
 # Changelog
 
+## 0.2.0 — from prototype to platform
+
+Engine
+
+- **Per-plugin capability enforcement.** Manifest `capabilities` are checked
+  before every model call: `llm.generate`, `llm.chat`, `llm.vision`,
+  `llm.structured`. A plugin cannot use a capability it never declared
+  (`capability_denied`); unknown names stay informational so newer plugins still
+  load on older engines.
+- **Task registry**: running tasks, bounded history (`tasks.history_size`) and an
+  append-only JSONL **audit log** of input *hashes*, models and durations
+  (`tasks.audit_log`, `tasks.audit_file`). Cancellation of one task or all.
+- **Result cache** with TTL and an entry cap (`cache.enabled`,
+  `cache.ttl_seconds`, `cache.max_entries`), off by default, plus `cache.clear`.
+- **Streaming inference** end to end: Ollama streaming and deterministic mock
+  fragments, `on_token` in the Python and JavaScript SDKs, `llm.token` /
+  `model.token` events, `--events` on the CLI.
+- New control types `tasks.list`, `tasks.get`, `task.cancel`, `cache.clear`.
+  Latency-sensitive controls (`ping`, `status`, `shutdown`, `task.cancel`,
+  `tasks.list`, `tasks.get`) are answered inline instead of queueing behind a
+  long task.
+- **Userscript-bridge policy** (`hub/bridge.py`), re-checked by the engine for
+  every page-facing interface (`tampermonkey`, `userscript`, `page`, `web`).
+  Page-supplied `options` and `domain_config` are dropped, never merged.
+- Native-pipe size guards (1 MiB outgoing, 64 MiB incoming) answer
+  `message_too_large` instead of letting the browser drop the port. Error
+  vocabulary gained `capability_denied`, `task_cancelled`, `unknown_task`,
+  `rate_limited`, `unauthorized`, `forbidden`, `not_found`.
+
+Command line
+
+- `laihub tasks` (`--running`, `--id`, `--limit`), `cancel [<id>|*]`, `cache`,
+  `serve`, `doctor`, `--version`, alongside the existing `ping`, `status`,
+  `plugins`, `domains`, `domain`, `models`, `unload`, `config`, `task`.
+- `--remote` sends the request to a running local API instead of starting an
+  engine in-process.
+
+Local HTTP API (still opt-in, localhost only, bearer token, no CORS)
+
+- `GET /v1/ping`, `/v1/config`, `/v1/domains/<domain>`, `/v1/tasks`,
+  `/v1/tasks/<id>`, `/v1/events` (Server-Sent Events), `/v1/openapi.json`.
+- `POST /v1/task/cancel`, `/v1/cache/clear`, `/v1/models/unload`, `/v1/shutdown`.
+- Optional **AF_UNIX socket** transport (`api.unix_socket`), origin allowlist
+  (`api.allowed_origins`) and token-in-query auth (`api.allow_token_query`) for
+  clients such as `EventSource` that cannot set headers.
+
+Firefox extension
+
+- **Tampermonkey / Violentmonkey bridge**: opt-in per domain, plugin allowlist,
+  input data only, rate and size limits, results applied with the user's own
+  action spec. Silent on sites that did not opt in.
+- **Dry-run mode** (plan the changes, apply nothing), **per-item result review**,
+  **selector picker**, context-menu "send selection to Local AI Hub" and
+  per-feature keyboard commands.
+- Options UI: feature templates for all ten plugins and a per-domain bridge
+  opt-in.
+
+Manifest V3
+
+- `scripts/build_mv3.py` builds and validates `dist/mv3-firefox` (event page) and
+  `dist/mv3-chrome` (service worker) from the unchanged MV2 sources; `make mv3`
+  and a step in `scripts/check.sh`.
+- `lib/browser.js` compatibility shim, `OffscreenCanvas` image re-encoding for
+  workers, and a 30 s `lah-keepalive` alarm that reconnects the native port and
+  sweeps deadlines lost to a worker restart.
+
+Plugins
+
+- Six new plugins: `page.summarize`, `text.translate`, `links.check`,
+  `forms.fill`, `images.dedupe` (pure-Python perceptual hashing),
+  `moderation.queue`. Ten bundled plugins in total.
+- Fixes: `images.dedupe` hashes are no longer disturbed by floating-point
+  rounding noise; `links.check` classifies anchors correctly, accepts bare-domain
+  allowlist entries and honours `input.allowlist_domains`.
+
+Config, docs, tests
+
+- `config/hub.json` carries the `tasks`, `cache`, `api`, `bridge` and `security`
+  sections the engine reads; every version string unified at 0.2.0.
+- New docs: [TAMPERMONKEY.md](docs/TAMPERMONKEY.md) and [MV3.md](docs/MV3.md).
+- Example inputs for every plugin and a ready-to-edit Tampermonkey userscript.
+- **261 Python unit tests, 28 extension logic checks, 15 end-to-end smoke
+  checks**, including new suites for the API, cache, CLI, bridge, capabilities,
+  streaming, task registry and the six new plugins; pure-Python PNG/JPEG fixtures.
+- Repository hygiene: `.gitignore`, no tracked `.DS_Store` or scratch artifacts.
+
+Known gaps: real imageboard selectors, a signed persistent Firefox installation,
+MV3 exercised in a real browser, and an OS-level sandbox (plugins remain trusted
+local programs).
+
 ## 0.1.0 — initial prototype
 
 Platform

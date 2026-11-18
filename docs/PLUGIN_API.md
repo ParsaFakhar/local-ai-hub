@@ -38,11 +38,31 @@ plugins/my.thing/
 | `input` / `output` | JSON-Schema subset: `type`, `properties`, `required`, `items`, `enum`, `const`, `minimum/maximum`, `minLength/maxLength`, `minItems/maxItems`, `default` |
 | `default_config` | lowest-priority plugin options |
 | `timeout_seconds` | overrides `plugins.timeout_seconds` |
-| `capabilities` | declarative, for documentation and future permissioning |
+| `capabilities` | **enforced** before every model call — see below |
 
 Input is validated **before** the process starts; `default` values are filled in
 automatically. Output violations are logged and reported in
 `meta.output_schema_errors` (not fatal, so a plugin can ship partial results).
+
+### Capabilities
+
+`hub/capabilities.py` checks each `generate` / `chat` request against the
+manifest declaration before it reaches the model runtime:
+
+| Capability | Grants |
+| --- | --- |
+| `llm.generate` | text inference via `generate` (and `chat`) |
+| `llm.chat` | chat inference via `chat` |
+| `llm.vision` | passing `images` (implies model access) |
+| `llm.structured` | passing `format` (`"json"` or a JSON schema) |
+
+A plugin with no model capability cannot call the model at all; `images` without
+`llm.vision`, or `format` without `llm.structured`, is refused with
+`capability_denied`. Declare exactly what you use — `links.check` and
+`images.dedupe` declare nothing and run fully offline. Unknown capability names
+are reported at discovery time but do not block the plugin, so newer plugins
+still load on older engines. This is least privilege, not a sandbox: it limits
+what the engine does for you, not what your own process can do.
 
 ### Config precedence
 

@@ -1,88 +1,71 @@
 # START HERE — LLM handoff for local-ai-hub
 
-> Read this first. Then `PLAN.md` (what's left) and `WORKLOG.md` (what happened).
-> Older session notes are preserved in `history/`.
+## What this project is (5 lines)
 
-## What this project is (30 seconds)
+Local AI Hub is a local, extensible AI automation platform for macOS; Firefox is
+its first interface, not its purpose. A browser extension extracts page data with
+per-domain selector configs and sends **tasks** over native messaging to a Python
+**engine** (`hub/`) that routes them to **plugins** (Python/Node subprocesses) and
+brokers model calls to Ollama (or an offline mock). Results return through an
+allowlisted applier — never innerHTML, never page- or LLM-supplied code.
 
-**Local AI Hub** is a local, extensible AI automation platform for macOS.
-Firefox Nightly is its *first interface*, not its purpose. A Firefox MV2
-extension extracts page data via per-domain selector configs, sends **tasks**
-over native messaging to a Python **engine** (`hub/`), which routes them to
-**plugins** (independent Python/Node subprocesses) and brokers all model calls
-to **Ollama** (or an offline mock). Results return to the page through an
-**allowlisted applier** (badges/classes/attributes/hide — never innerHTML).
-The same engine is reachable via CLI (`bin/laihub`), Python import, and an
-opt-in token-authenticated localhost HTTP API. Comment classification and
-image tagging are just the first two applications of ten bundled plugins.
+## Phase 0 — do this first, every session
 
-Security invariant: **the platform never executes code or commands supplied by
-webpages or LLM output.** Everything crossing a trust boundary is
-schema-validated data. See `docs/SECURITY.md`.
+1. Repo in the workspace? Clone if not. `git rev-parse --short HEAD` = base commit
+   (informational only). **Never commit, never push.**
+2. Read `for LLM/STATE.md`, then this file. Read nothing else here until needed.
+3. For **every ledger row** in STATE.md run, from the repo root:
+   `sh "for LLM/fingerprint.sh" <paths from that row>`
+   - same fingerprint → the result still holds, **cite it, do not rerun**;
+   - different fingerprint → row is stale: rerun that one check, update result +
+     fingerprint, and note it in WORKLOG.md.
+4. Continue from **Current task** in STATE.md. Docs-only edits never invalidate
+   code rows — that is what the *Paths covered* column is for.
 
-## Repo map
+## Rules (condensed)
 
-```
-hub/            engine: router, config, domains, plugins, runtime, models,
-                cache, tasks, capabilities, bridge policy, HTTP api
-native/         native messaging host (stdio framing ⇄ Firefox)
-extension/      MV2 Firefox extension (background, content, options, popup)
-plugins/        10 plugins: comments.classify, images.tag, hello.python,
-                hello.javascript, page.summarize, text.translate, links.check,
-                forms.fill, images.dedupe, moderation.queue
-sdk/            stdlib-only plugin SDKs (python, js)
-config/         hub.json + per-domain configs (incl. news.ycombinator.com demo)
-scripts/        install helpers, doctor, smoke test, packaging, build_mv3.py
-templates/      plugin skeleton
-examples/       inputs for every plugin + Tampermonkey userscript + API clients
-tests/          Python unittest + node extension-logic tests + image_fixtures
-docs/           architecture, protocol, plugin API, domain config, security…
-for LLM/        ← you are here: handoff notes, plans, scratch space for LLMs
-```
+- **Notes as you go.** After every milestone update STATE.md (rewrite in place),
+  prepend a WORKLOG.md entry, tick PLAN.md — in the *same* tool call as the work.
+  Assume the session can be cut off at any moment.
+- **Ledger rule.** No check is "known green" without a row + matching fingerprint.
+  Never rerun a check whose fingerprint still matches.
+- **Verify, don't guess.** One grep beats an assumption. If you must write
+  something unconfirmed, mark it UNVERIFIED and list it in STATE.md.
+- **Docs describe the code as it is.** Fix stale claims (test counts, "not
+  implemented", plugin lists) in the same session that changes behavior.
+- **Files.** The repo is the deliverable and must mirror the intended repo
+  exactly: only project content, no dumps, uploads, probes, scratch or images.
+  Scratch goes in `/tmp/scratch/`. `for LLM/` holds exactly the 5 files below.
+- **Batch tool calls**; never dump large output (`head`, `grep -n`, `sed -n`).
+- Everything runs **offline**: stdlib-only Python, `node` for JS. No new deps.
 
-## Verify the baseline (do this before changing anything)
+## Commands (no `make` needed)
 
 ```bash
-python3 -m unittest discover -s tests   # unit tests
-node tests/test_extension.js            # extension logic checks
-python3 scripts/smoke_test.py --quiet   # end-to-end over real native pipe
-python3 scripts/build_mv3.py            # MV3 builds (firefox + chrome)
-./scripts/check.sh                      # all of the above except MV3
+python3 -m unittest discover -s tests    # Python unit tests
+node tests/test_extension.js             # extension logic checks
+python3 scripts/smoke_test.py --quiet    # end-to-end over the real native pipe
+python3 scripts/build_mv3.py             # MV3 firefox + chrome builds + validation
+./scripts/check.sh                       # all of the above + syntax/JSON lint
+python3 scripts/package.py               # dist zip + xpi (verify flags before use)
 ```
 
-Everything runs **offline** with the mock model backend — no Ollama, no model
-download, no Firefox needed. Node is used for JS plugins/tests.
+## File map of `for LLM/`
 
-## State when this file was last updated
+| File | Purpose |
+| --- | --- |
+| `START_HERE.md` | this file: orientation + procedure + rules |
+| `STATE.md` | live status: test ledger, current task, next tasks, blockers |
+| `PLAN.md` | one consolidated plan, `[x]` done / `[ ]` todo / `[!]` blocked |
+| `WORKLOG.md` | one short entry per session, newest at the TOP (never edit old ones) |
+| `fingerprint.sh` | `sh "for LLM/fingerprint.sh" hub plugins tests` → 12-char hash |
 
-Session of 2026-11-17, repo HEAD `32b7582` ("Replace project with updated version").
-Verified green at session start: **237 Python tests, 28 extension checks,
-15 smoke checks, MV3 builds validate for both targets.** Versions unified at
-0.2.0. The MV3 chrome validator bug from `history/AUDIT.md` is already fixed.
+## Gotchas worth knowing
 
-This session is working through the remaining gaps — see `PLAN.md` for the
-live checklist and `WORKLOG.md` for what has been done and verified.
-
-## Conventions & gotchas (save yourself debugging time)
-
-- **Engine harness for tests**: set `LOCAL_AI_HUB_DATA` to a temp dir, then
-  `Engine(load_config({"ollama": {"mock": True}}))`; call
-  `engine.handle({"type": "task", "plugin": ..., "input": ...})`.
-  Copy the pattern from `tests/test_engine.py` (setUpClass/tearDownClass).
-- **Mock model**: `hub/models/manager.py` `_mock_payload`/`_mock_fill` fill
-  JSON schemas deterministically. Structured outputs come back schema-shaped;
-  tests assert structure/coercion, not model quality.
-- **`tests/image_fixtures.py`** generates real PNG/JPEG bytes in pure Python
-  (`png_bytes`, `jpeg_bytes`) — use it for images.dedupe / images.tag tests.
-- Plugin manifests are single-line JSON files; `python3 -m json.tool` to read.
-- stdout of host/plugins is **protocol-only**; logs go to stderr. Never print
-  to stdout in plugin code (Python SDK redirects print already).
-- The repo is committed by the user from the LLM workspace ("Replace project
-  with updated version" commits). `for LLM/` holds LLM scratch artifacts
-  (old README dumps in `uploads/`, `audit/dump.txt`, an API probe script,
-  apple stock images). They are harmless history; don't treat them as code.
-- No network access is needed for any test. Don't add dependencies: engine and
-  SDKs are **stdlib-only** by design; plugins must stay dependency-free.
-- Docs drift is the recurring failure mode of this repo: after changing
-  behavior, grep docs for stale claims (test counts, "not implemented",
-  plugin lists) and update README/CHANGELOG/ROADMAP in the same session.
+- Engine test harness: `LOCAL_AI_HUB_DATA` → temp dir, then
+  `Engine(load_config({"ollama": {"mock": True}}))`; copy `tests/test_engine.py`.
+- Mock model fills JSON schemas deterministically (`hub/models/manager.py`);
+  assert structure/coercion, not model quality.
+- `tests/image_fixtures.py` generates real PNG/JPEG bytes in pure Python.
+- Plugin manifests are single-line JSON; stdout of host/plugins is protocol-only.
+- Recurring failure mode of this repo: **doc drift**. Grep docs after changes.
