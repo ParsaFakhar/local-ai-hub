@@ -115,6 +115,18 @@ class ModelManager:
         self._last_used = 0.0
         self._reaper: threading.Thread | None = None
         self._stopping = threading.Event()
+        self._warmup_lock = threading.Lock()
+        self._warmup_thread: threading.Thread | None = None
+        self._warmup: dict[str, Any] = {
+            "state": "idle",
+            "models": [],
+            "loaded": [],
+            "skipped": [],
+            "failed": [],
+            "duration_ms": 0,
+            "error": None,
+            "mock": self.mock,
+        }
 
     # ------------------------------------------------------------------
     def _emit(self, name: str, data: dict) -> None:
@@ -350,6 +362,141 @@ class ModelManager:
         }
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Warm-up: pay the cold-load latency before the first task, not inside it
+    # ------------------------------------------------------------------
+    def warmup_targets(self) -> list[str]:
+        """Models the configured policy warms: default, optional vision, extras."""
+        names = [self.default_model]
+        if bool(self.config.get("ollama.warmup_vision", False)):
+            names.append(self.vision_model)
+        extra = self.config.get("ollama.warmup_models", []) or []
+        if isinstance(extra, str):
+            extra = [extra]
+        names.extend(str(name) for name in extra)
+        seen: set[str] = set()
+        ordered = []
+        for name in names:
+            if name and name not in seen:
+                seen.add(name)
+                ordered.append(name)
+        return ordered
+
+    def warmup_status(self) -> dict:
+        with self._warmup_lock:
+            return dict(self._warmup)
+
+    def warmup(self, models: list[str] | None = None, *, block: bool = False) -> dict:
+        """Preload models so the first real task does not wait for the weights.
+
+        Non-blocking by default: a daemon thread does the loading and progress
+        is reported through ``model.warming`` / ``model.warmed`` /
+        ``model.warmup_failed`` / ``model.warmup_done`` events and
+        ``status().warmup``.  A second call while one is in flight is a no-op
+        that returns the running state.  Warm-up never pins a model: the idle
+        reaper still unloads it after ``ollama.idle_unload_seconds``.
+        """
+        requested = models if models else self.warmup_targets()
+        if isinstance(requested, str):
+            requested = [requested]
+        targets: list[str] = []
+        for name in requested:
+            name = str(name).strip()
+            if name and name not in targets:
+                targets.append(name)
+        with self._warmup_lock:
+            if self._warmup["state"] == "running":
+                return dict(self._warmup)
+            self._warmup = {
+                "state": "running",
+                "models": targets,
+                "loaded": [],
+                "skipped": [],
+                "failed": [],
+                "duration_ms": 0,
+                "error": None,
+                "mock": self.mock,
+            }
+            snapshot = dict(self._warmup)
+        if not targets:
+            with self._warmup_lock:
+                self._warmup["state"] = "ready"
+            return self.warmup_status()
+        if block:
+            self._warmup_run(targets)
+            return self.warmup_status()
+        self._warmup_thread = threading.Thread(
+            target=self._warmup_run, args=(targets,), name="model-warmup", daemon=True
+        )
+        self._warmup_thread.start()
+        return snapshot
+
+    def _warmup_run(self, targets: list[str]) -> None:
+        started = time.monotonic()
+        loaded: list[str] = []
+        skipped: list[str] = []
+        failed: list[str] = []
+        error: str | None = None
+        keep_alive = self.config.get("ollama.keep_alive", "5m")
+        timeout = float(self.config.get("ollama.warmup_timeout_seconds", 120))
+        for name in targets:
+            if self._stopping.is_set():
+                break
+            try:
+                # The mock backend accepts any tag; the real one must have it.
+                resolved = name if self.mock else self.resolve_model(name)
+            except ModelError as exc:
+                failed.append(name)
+                error = str(exc)
+                self._emit("model.warmup_failed", {"model": name, "error": str(exc)})
+                continue
+            if resolved in self._loaded:
+                skipped.append(resolved)
+                continue
+            self._emit("model.warming", {"model": resolved})
+            call_started = time.monotonic()
+            try:
+                if not self.mock:
+                    self.ensure_server()
+                    self.client.load(resolved, keep_alive=keep_alive, timeout=timeout)
+            except (ModelError, OllamaError) as exc:
+                failed.append(resolved)
+                error = str(exc)
+                log.warning("warm-up of %s failed: %s", resolved, exc)
+                self._emit("model.warmup_failed", {"model": resolved, "error": str(exc)})
+                continue
+            self._touch(resolved)
+            loaded.append(resolved)
+            self._emit(
+                "model.warmed",
+                {
+                    "model": resolved,
+                    "duration_ms": int((time.monotonic() - call_started) * 1000),
+                    "mock": self.mock,
+                },
+            )
+        if self._stopping.is_set():
+            state = "cancelled"
+        elif not failed:
+            state = "ready"
+        else:
+            state = "failed" if not loaded and not skipped else "partial"
+        summary = {
+            "state": state,
+            "models": targets,
+            "loaded": loaded,
+            "skipped": skipped,
+            "failed": failed,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "error": error,
+            "mock": self.mock,
+        }
+        with self._warmup_lock:
+            self._warmup = summary
+        log.info("model warm-up %s (loaded=%s skipped=%s failed=%s)", state, loaded, skipped, failed)
+        self._emit("model.warmup_done", {key: summary[key] for key in
+                                        ("state", "loaded", "skipped", "failed", "duration_ms")})
+
     def _touch(self, model: str) -> None:
         with self._lock:
             self._loaded[model] = time.monotonic()
@@ -408,6 +555,7 @@ class ModelManager:
             "installed_models": self.installed_models() if alive else [],
             "idle_unload_seconds": self.config.get("ollama.idle_unload_seconds"),
             "stream": bool(self.config.get("ollama.stream", False)),
+            "warmup": self.warmup_status(),
             "last_used_ms_ago": int((time.monotonic() - self._last_used) * 1000) if self._last_used else None,
         }
 

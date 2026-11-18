@@ -27,7 +27,7 @@ local-ai-hub/
 ├── scripts/            installer helpers, doctor, smoke test, packaging, MV3 builder
 ├── templates/          Skeleton for writing your own plugin
 ├── examples/           Sample inputs, Tampermonkey userscript, API/engine clients
-├── tests/              261 Python unit tests + 28 extension logic checks
+├── tests/              330 Python unit tests + 28 extension logic checks
 └── docs/               Architecture, protocol, plugin API, security, MV3, install
 ```
 
@@ -109,6 +109,8 @@ native-host manifest — see [docs/MV3.md](docs/MV3.md).
 ./bin/laihub --mock --events task comments.classify --input @examples/comments.json
 ./bin/laihub tasks --running          # what is in flight
 ./bin/laihub tasks --id task-7f3a91   # one task, running or recent
+./bin/laihub warmup                   # preload models before the first task
+./bin/laihub task hello.python --priority high   # jump the waiting queue
 ./bin/laihub cancel '*'               # cancel everything running
 ./bin/laihub cache                    # result-cache statistics
 ./bin/laihub serve                    # opt-in local HTTP API
@@ -203,6 +205,10 @@ codes: [docs/TAMPERMONKEY.md](docs/TAMPERMONKEY.md).
 
 * Ollama is started **on demand** (`ollama serve`) only when a task needs it
 * models load on first use, with `keep_alive` (default `5m`)
+* optional **warm-up** (`ollama.warmup`, off by default) preloads the default
+  model — plus the vision model / `warmup_models` if asked — on a background
+  thread, so the first task does not pay the cold-load latency
+  (`laihub warmup`, `models.warmup`, `POST /v1/models/warmup`)
 * idle models are unloaded automatically (default 300 s) to free unified memory
 * `stop_on_exit` can shut down a server the hub started itself
 * structured JSON output is enforced with a schema, not by hoping the model behaves
@@ -213,6 +219,9 @@ codes: [docs/TAMPERMONKEY.md](docs/TAMPERMONKEY.md).
 
 * **Task registry** — running tasks, bounded history and an append-only JSONL
   audit log of input *hashes*, models and durations; cancel one task or all.
+* **Task priorities** — `priority` 0-9 (or `low`/`normal`/`high`, higher first)
+  orders the native host's waiting queue, FIFO within a level; a queued task can
+  be cancelled before it starts (`tasks.queue_size`, `tasks.default_priority`).
 * **Result cache** — TTL + entry cap, off by default (`cache.enabled`), so
   unchanged inputs are not re-classified.
 * **Capability enforcement** — a plugin may only use the `llm.*` capabilities its
@@ -243,8 +252,8 @@ Details: [docs/SECURITY.md](docs/SECURITY.md).
 ## Testing
 
 ```bash
-make test        # 261 Python unit tests + 28 extension logic checks
-make smoke       # 15 end-to-end checks over the real native messaging pipe
+make test        # 330 Python unit tests + 28 extension logic checks
+make smoke       # 18 end-to-end checks over the real native messaging pipe
 make mv3         # build + validate the MV3 firefox and chrome variants
 make doctor      # diagnose an installation
 ./scripts/check.sh   # everything above in one go, no make required
@@ -268,6 +277,8 @@ the framed protocol, using the offline mock backend — no model download needed
 | Ten bundled plugins                    | Implemented            |
 | Dry run, result review, selector picker| Implemented            |
 | Task history, audit log, cancellation  | Implemented            |
+| Task priorities (queue order)          | Implemented            |
+| Model warm-up (opt-in preload)         | Implemented (off by default) |
 | Result cache                           | Implemented (off by default) |
 | Capability enforcement                 | Implemented (`llm.*`)  |
 | Streaming inference                    | Implemented            |

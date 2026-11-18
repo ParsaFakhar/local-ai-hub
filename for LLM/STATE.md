@@ -1,6 +1,6 @@
 # STATE — local-ai-hub
 
-**Base commit:** `29d4d13` ("replacing the repo") · **Session date:** 2026-11-18
+**Base commit:** `b1178b6` ("replaced") · **Session date:** 2026-11-19
 Informational only. Never commit or push; the workspace folder is the deliverable.
 
 ## Test ledger
@@ -10,85 +10,91 @@ cite it. Mismatch = rerun that row only, then update Result + Fingerprint.
 
 | Check | Command | Result | Paths covered | Fingerprint |
 | --- | --- | --- | --- | --- |
-| Python unit tests | `python3 -m unittest discover -s tests` | PASS — 261 tests, OK (11.7s) | `hub native plugins sdk config scripts tests bin` | `089f0ef91e37` |
+| Python unit tests | `python3 -m unittest discover -s tests` | PASS — 330 tests, OK (13.4s) | `hub native plugins sdk config scripts tests bin` | `288dcb778fe9` |
 | Extension logic | `node tests/test_extension.js` | PASS — 28/28 | `extension tests/test_extension.js` | `286c63e0186e` |
-| End-to-end smoke | `python3 scripts/smoke_test.py --quiet` | PASS — 15/15 | `hub native plugins sdk config scripts/smoke_test.py` | `8396972d339c` |
+| End-to-end smoke | `python3 scripts/smoke_test.py --quiet` | PASS — 18/18 | `hub native plugins sdk config scripts/smoke_test.py` | `b1eceb0f5c20` |
 | MV3 build + validation | `python3 scripts/build_mv3.py` | PASS — firefox + chrome both validated | `extension scripts/build_mv3.py` | `cd6e0afcd509` |
 
-Measured 2026-11-18 at base `29d4d13`, re-fingerprinted after the final cleanup:
-unchanged. **No code was touched this session** (docs, README, CHANGELOG,
-`.gitignore`, `for LLM/` only), so all four rows still hold. Do not rerun them.
+2026-11-19: both Python rows rerun after the priority + warm-up features; both
+extension rows still match (nothing under `extension/` changed). Docs edits: no-op.
 
 ## Current task
 
-None in flight — the 2026-11-18 documentation + handoff session is complete
-(PLAN P0–P8 all ticked). Artifacts: `handoff_out/local-ai-hub-0.2.0.zip` and
-`handoff_out/local-ai-hub-extension-0.2.0.xpi`, **outside** the repo at the
-workspace root; `dist/` was removed from the repo afterwards.
+None in flight — 2026-11-19 shipped **task priorities** (P9) and **model warm-up**
+(P10): code, tests, docs, packaging done. Artifacts outside the repo at the
+workspace root: `handoff_out/local-ai-hub-0.2.0.zip` (134 files) +
+`handoff_out/local-ai-hub-extension-0.2.0.xpi` (19 files); `dist/` + caches removed.
 
-**Exact next step for the next session:** re-fingerprint the four ledger rows
-(Phase 0 in START_HERE.md), then pick from `docs/ROADMAP.md`. The highest-value
-open items need a real machine, not this sandbox: load the MV2/MV3 build in
-Firefox/Chrome with a real Ollama model, and validate a real board's selectors.
-Pure-code candidates that need no browser: task priorities, model warm-up policy,
-a second model backend behind `hub/models/ollama.py`'s interface.
+**Exact next step for the next session:** re-fingerprint the four rows (Phase 0),
+then take the next pure-code item: **a second inference backend** behind the
+`hub/models/ollama.py` interface (llama.cpp / LM Studio speak a similar HTTP API;
+`ModelManager` is the only place that knows the backend). Alternative: API rate
+limiting mirroring `hub/bridge.py`. Both touch `hub/` → rerun the 2 Python rows.
 
 ## Next 5 tasks, in order (suggested)
 
-1. Real-browser validation of MV3 (`docs/MV3.md` §9 says it is static-only today).
-2. Real-model + real-board validation, then tune `batch_size` / `num_ctx`.
-3. Task priority queue in `hub/tasks.py` (cancellation already exists).
-4. Model warm-up policy in `hub/models/manager.py`.
-5. Second inference backend behind the same interface (llama.cpp / MLX / LM Studio).
+1. Second inference backend behind the same interface (`ollama.backend` switch).
+2. API rate limiting for local clients (mirror the bridge's per-minute policy).
+3. Real-browser validation of MV3 (`docs/MV3.md` §9: static-only today).
+4. Real-model + real-board validation; tune `batch_size`/`num_ctx`/`warmup`.
+5. Per-site extension profiles (several selector sets for one domain).
 
 ## Verified facts worth reusing (don't re-grep)
 
+- Priorities: int 0-9, **higher first**, default 5, names low=0/normal=5/high=9,
+  garbage → default. `hub/tasks.py:TaskQueue` (heap+Condition, FIFO per level,
+  bounded blocking `put`, `snapshot/remove/clear`) is owned by `Engine.queue` and
+  consumed by the host's 2 workers; running tasks are never preempted. CLI/HTTP
+  call the engine directly (ThreadingHTTPServer) → unqueued.
+- `tasks.list` → `{running, queued, history, counters}`; `status.tasks` =
+  counters + `queued`. `task.cancel <queued id>` → `{cancelled:[id], queued:true}`
+  + `task.cancelled` event + cancelled history/audit record; `*` covers both.
+  `meta.priority` on every result incl. cache hits; `tasks.queue_size` (64),
+  `tasks.default_priority` (5), CLI `task --priority`.
+- Warm-up: off by default. Keys `ollama.warmup`, `warmup_on_start` (true),
+  `warmup_vision` (false), `warmup_models` ([]), `warmup_timeout_seconds` (120).
+  `ModelManager.warmup(models=None, block=False)` → `{state, models, loaded,
+  skipped, failed, duration_ms, error, mock}`; states idle/running/ready/partial/
+  failed/cancelled; events `model.warming|warmed|warmup_failed|warmup_done`; also
+  in `status.models.warmup` / `models.list`. `OllamaClient.load` = empty prompt +
+  keep_alive. Mock warms any tag; real backend resolves it first. Idle reaper
+  still unloads warmed models.
+- `models.warmup` is a control type but **not** inline (a cold load must not
+  block the host reader thread). `POST /v1/models/warmup` forwards `models`;
+  other argument-less POST control routes still ignore the body.
 - Bridge: events `local-ai-hub:{hello,ready,request,response}`, `detail` = JSON
-  string, v1; ready = `{version, domain, plugins, allow_apply,
-  max_requests_per_minute, max_input_bytes}`; request keys `version,id,plugin,
-  input,apply`; 30/min, 2 in flight, 256 KiB input, 4 MiB detail cap.
-- Capabilities enforced (`hub/capabilities.py`): `llm.generate|chat|vision|
-  structured`; unknown names informational; no fs/net capabilities exist.
-- `hub/tasks.py`: bounded history + JSONL audit of input hashes; cancel/get/counters.
-- `hub/cache.py`: sha256 `cache_key(...)`, TTL, LRU cap, `meta.cache={hit,age_ms,key}`.
-- Control types incl. `tasks.list/get`, `task.cancel`, `cache.clear`; inline set =
-  ping, status, shutdown, task.cancel, tasks.list, tasks.get. `task.cancel` →
-  `{cancelled:[…]}` (+`all:true` for `*`), `cache.clear` → `{cleared, cache}`.
-- Streaming: `llm.token` frames `{type,id,text,index}` (cap 20 000/call) →
-  coalesced `model.token` events `{plugin,text}`.
-- API: full `/v1` route table, SSE `event: ready` + `: keepalive` every 15 s,
-  `?access_token=` only on `/v1/events` when `api.allow_token_query`, AF_UNIX opt-in.
-- `scripts/package.py` needs no flags (`--zip-only` / `--xpi-only` exist); it
-  excludes `.git`, `dist`, caches, `.DS_Store`, `*.log/zip/xpi` and **includes
-  `for LLM/`**, which is intended.
-- MV2: 7 suggested shortcuts (Chrome build keeps 4); host `local_ai_hub`; gecko id
-  `local-ai-hub@localaihub.dev`; `install.sh` registers Firefox only.
+  string, v1; 30/min, 2 in flight, 256 KiB input, 4 MiB detail cap.
+- Capabilities enforced: `llm.generate|chat|vision|structured`; no fs/net ones.
+  `hub/cache.py`: sha256 `cache_key`, TTL, LRU cap, `meta.cache={hit,age_ms,key}`.
+  Streaming: `llm.token` `{type,id,text,index}` → `model.token` `{plugin,text}`.
+- API: `/v1` routes, SSE `event: ready` + 15 s keepalive, `?access_token=` only on
+  `/v1/events` when `api.allow_token_query`, AF_UNIX opt-in.
+- `scripts/package.py` needs no flags; excludes `.git`, `dist`, caches,
+  `.DS_Store`, `*.log/zip/xpi`; **includes `for LLM/`** (intended).
+- CLI state is per-process: one-shot `laihub tasks` / `laihub models` show no
+  history/warm-up from an earlier one-shot call. The native host is long-lived.
 
 ## Known bugs / blockers
 
 - None known in the code.
-- Sandbox: no `make`, no `zip`, no `pip` — use the raw python3/node commands;
-  packaging works anyway (stdlib zipfile).
-- No browser and no Ollama here: nothing can be validated end-to-end against a
-  real page or model. The docs say so explicitly.
-- Remote here is `ParsaFakhar/local-ai-hub`; the prompt's `RafaelRibeiro/...` 404s.
+- Sandbox: no `make`/`zip`/`pip` — use the raw python3/node commands. No browser
+  or Ollama: MV3 and real-model behaviour (incl. warm-up latency) are untestable
+  end to end here; the docs say so.
 
 ## Do NOT do this
 
 - Do not rerun the four ledger checks while their fingerprints match.
 - Do not resurrect `for LLM/history|audit|uploads|scratch|image-search`.
-- Do not re-fix engine double-wrap, config keys, versions, MV3 validator,
-  `.gitignore`/`.DS_Store`.
-- Do not rewrite the docs finished on 2026-11-18 (TAMPERMONKEY, MV3, ROADMAP,
-  SECURITY, ARCHITECTURE, PROTOCOL, PLUGIN_API, DOMAIN_CONFIG, INSTALL_MACOS,
-  README, CHANGELOG 0.2.0). Extend them only with newly verified facts.
+- Do not re-fix engine double-wrap, config keys, versions, MV3 validator, the
+  API POST body forwarding for `models.warmup`, or `on_event(name, data)` arity.
+- `.DS_Store` is **tracked upstream**, so every fresh clone restores it; deleted
+  again on 2026-11-19, `.pytest_cache/` in `.gitignore`. Keep it deleted.
+- Do not rewrite the docs finished on 2026-11-18/19 (all of `docs/`, README,
+  CHANGELOG 0.2.0). Extend them only with newly verified facts.
 - No new deps, no commits/pushes, no zip or `dist/` left inside the repo.
 
 ## Unverified claims (check before repeating them in docs)
 
-- `tasks.list` output keys are described in prose only ("running, history,
-  counters"); exact JSON keys not read (`hub/engine.py:190`).
-- The `status` output description is inherited from the old PROTOCOL.md and was
-  not re-verified field by field.
-- Extension UX items (dry run, review UI, picker, menus) are carried from the
-  prior audit + green tests, not re-read line by line this session.
+- The `status` output description is inherited from the old PROTOCOL.md; only
+  `tasks` and `models.warmup` were re-verified. Extension UX items (dry run,
+  review UI, picker, menus) come from the prior audit + green tests, not a read.

@@ -79,9 +79,42 @@ Items marked *(prior audit)* were verified by an earlier session at HEAD
 - [x] Final tree clean: no `dist/`, no `__pycache__`, `for LLM/` = 5 files,
       `git status --short` shows only intended changes
 
+## P9 — task priorities (2026-11-19)
+
+- [x] `normalize_priority` + `TaskQueue` in `hub/tasks.py` (0-9, higher first,
+      FIFO per level, bounded, snapshot/remove/clear)
+- [x] `priority` in registry running/get/history/audit + `cancel_before_start`
+- [x] Engine: `engine.queue`, `meta.priority`, `tasks.list.queued`,
+      `status.tasks.queued`, queue-aware `task.cancel`, shutdown clears queue
+- [x] Native host workers consume the priority queue
+- [x] Config `tasks.queue_size` / `tasks.default_priority` (defaults + hub.json)
+- [x] CLI `laihub task --priority`
+- [x] `tests/test_priority.py` (32 tests) + 2 smoke checks → 293 / 17 green
+- [x] Docs: PROTOCOL (priority field, meta, `task.cancelled`, queued control
+      outputs, new "Task priorities" section), ARCHITECTURE, CHANGELOG 0.2.0,
+      ROADMAP (item removed), README (counts 293/17, feature bullet, CLI example)
+- [x] Repackaged from the final tree → `handoff_out/local-ai-hub-0.2.0.zip`
+      (133 files) + `handoff_out/local-ai-hub-extension-0.2.0.xpi` (19 files),
+      both outside the repo; `dist/` and caches removed again
+
+## P10 — model warm-up policy (2026-11-19)
+
+- [x] `OllamaClient.load` (empty prompt, keep_alive, timeout)
+- [x] `ModelManager.warmup` + targets/status/async run, skip + failure handling
+- [x] `models.warmup` control type, engine start-up warm-up (opt-in)
+- [x] Config keys + `config/hub.json`; `status().warmup`
+- [x] `POST /v1/models/warmup`, `LocalClient.warmup`, CLI `laihub warmup`
+- [x] `tests/test_warmup.py` (33 tests) + 1 smoke check → 326 / 18 green
+- [x] Docs: PROTOCOL (control row, events, "Model warm-up" section, HTTP row),
+      ARCHITECTURE, SECURITY limit table, CHANGELOG 0.2.0, ROADMAP, README
+- [x] Bug found by verifying the docs: generic POST control routes dropped the
+      body, so `POST /v1/models/warmup` ignored `models`. Fixed in `hub/api.py`
+      + 4 real-HTTP tests.
+- [x] Repackaged from the final tree → `handoff_out/` (134-file zip, 19-file xpi)
+
 ## Open project work (not this session)
 
 See `docs/ROADMAP.md`: real board selectors, real-model tuning, signed persistent
-install, MV3 in a real browser, OS sandbox, fs/net capabilities, task priorities,
-model warm-up, other backends, API stability + client libraries, packaging
-(Homebrew, launchd).
+install, MV3 in a real browser, OS sandbox, fs/net capabilities, other backends,
+API stability + client libraries, packaging (Homebrew, launchd).
+Task priorities (P9) and model warm-up (P10) shipped on 2026-11-19.

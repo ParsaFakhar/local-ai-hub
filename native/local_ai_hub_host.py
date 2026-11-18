@@ -29,6 +29,7 @@ from hub import protocol  # noqa: E402
 from hub.config import load_config  # noqa: E402
 from hub.engine import Engine  # noqa: E402
 from hub.logging_util import get_logger, setup_logging  # noqa: E402
+from hub.tasks import TaskQueue  # noqa: E402
 
 log = get_logger("host")
 
@@ -81,7 +82,7 @@ class NativeHost:
         if isinstance(message, dict) and message.get("type") == "shutdown":
             self._shutdown.set()
 
-    def _worker(self, tasks: "queue.Queue[dict]") -> None:
+    def _worker(self, tasks: TaskQueue) -> None:
         while not self._shutdown.is_set():
             try:
                 message = tasks.get(timeout=0.5)
@@ -95,7 +96,9 @@ class NativeHost:
     # ------------------------------------------------------------------
     def run(self) -> int:
         log.info("native host started (pid %d, root %s)", os.getpid(), _ROOT)
-        tasks: "queue.Queue[dict]" = queue.Queue(maxsize=64)
+        # Priority-ordered intake: high-priority tasks jump ahead of waiting
+        # normal ones, ties keep arrival order (see hub/tasks.py:TaskQueue).
+        tasks = self.engine.queue
         for index in range(self._max_workers):
             worker = threading.Thread(target=self._worker, args=(tasks,), name=f"task-{index}", daemon=True)
             worker.start()

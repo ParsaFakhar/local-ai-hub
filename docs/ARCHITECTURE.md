@@ -45,9 +45,12 @@ data only ([TAMPERMONKEY.md](TAMPERMONKEY.md)).
 
 * Framing: 4-byte little-endian length + UTF-8 JSON (Firefox native messaging).
 * `stdout` is protocol-only. All logging goes to `stderr` + a rotating file.
-* A reader loop plus worker threads. `INLINE_CONTROL_TYPES` (`ping`, `status`,
-  `shutdown`, `task.cancel`, `tasks.list`, `tasks.get`) are answered inline so
-  they stay responsive while a long task runs.
+* A reader loop plus two worker threads fed by the engine's **priority queue**
+  (`Engine.queue`): highest `priority` first, FIFO within one level, bounded by
+  `tasks.queue_size`. `INLINE_CONTROL_TYPES` (`ping`, `status`, `shutdown`,
+  `task.cancel`, `tasks.list`, `tasks.get`) are answered inline so they stay
+  responsive while a long task runs — and can cancel a task that is still
+  queued.
 * Outgoing frames are capped at 1 MiB and incoming frames at 64 MiB, with a clean
   `message_too_large` error instead of a broken pipe.
 * EOF on stdin (browser closed) triggers model cleanup and exit.
@@ -62,10 +65,10 @@ data only ([TAMPERMONKEY.md](TAMPERMONKEY.md)).
 | `domains.py` | Domain registry, specificity chain (`*` → parent → exact), extension overrides |
 | `plugins/manager.py` | Discovery, manifest validation (id, runtime, entry containment) |
 | `runtime/runner.py` | Subprocess execution, stdio RPC, timeouts, output caps, LLM call caps, `llm.token` streaming frames |
-| `models/manager.py` | Ollama discovery, on-demand start, model resolution, idle unload, streaming, mock backend |
-| `models/ollama.py` | Stdlib HTTP client (`/api/generate`, `/api/chat`, `/api/tags`, `/api/ps`) |
+| `models/manager.py` | Ollama discovery, on-demand start, model resolution, opt-in warm-up (async preload), idle unload, streaming, mock backend |
+| `models/ollama.py` | Stdlib HTTP client (`/api/generate`, `/api/chat`, `/api/tags`, `/api/ps`); empty-prompt `load`/`unload` |
 | `capabilities.py` | Per-plugin `llm.*` capability checks before every model call |
-| `tasks.py` | Running-task registry, cancellation, bounded history, JSONL audit log (input hashes) |
+| `tasks.py` | Priority intake queue (`TaskQueue`), running-task registry, cancellation (running or queued), bounded history, JSONL audit log (input hashes) |
 | `cache.py` | Result cache: sha256 cache key, TTL, LRU entry cap, hit metadata |
 | `bridge.py` | Userscript-bridge policy resolution + denial codes (pure functions) |
 | `schema.py` | JSON-Schema subset validation, defaults, sample generation |
@@ -145,6 +148,6 @@ Still open: API stability guarantees and published client libraries (see
 | Too many model calls | Per-task cap (`plugins.max_llm_calls`, default 64) |
 | Undeclared capability | `capability_denied` before the model is touched |
 | Page request without opt-in | `forbidden` from the bridge policy, logged |
-| Task cancelled | `task_cancelled`; `task.cancelling` event first |
+| Task cancelled | `task_cancelled`; `task.cancelling` event first. A task still queued is dropped instead: `task.cancelled` event, cancelled history record, no result |
 | Oversized result | `message_too_large` instead of a broken pipe |
 | Invalid input/output | Schema errors returned/logged, never silently coerced |

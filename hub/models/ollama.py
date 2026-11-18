@@ -187,6 +187,19 @@ class OllamaClient:
             return self._stream("/api/chat", body, on_token=on_token)
         return self._request("POST", "/api/chat", body)
 
+    def load(self, model: str, *, keep_alive: Any = "5m", timeout: float | None = None) -> dict:
+        """Load a model into memory without generating anything.
+
+        Ollama treats an empty prompt as "just load the weights"; the response
+        carries ``done_reason: "load"``.  This is the warm-up path.
+        """
+        return self._request(
+            "POST",
+            "/api/generate",
+            {"model": model, "prompt": "", "keep_alive": keep_alive},
+            timeout=timeout,
+        )
+
     def unload(self, model: str) -> None:
         """Free the model from memory (keep_alive=0 with an empty prompt)."""
         try:

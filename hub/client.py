@@ -175,6 +175,10 @@ class LocalClient:
     def unload(self) -> dict:
         return self.call("POST", "/v1/models/unload")["output"]
 
+    def warmup(self, models: list[str] | None = None) -> dict:
+        body = {"models": list(models)} if models else {}
+        return self.call("POST", "/v1/models/warmup", body)["output"]["warmup"]
+
     def run(
         self,
         plugin: str,

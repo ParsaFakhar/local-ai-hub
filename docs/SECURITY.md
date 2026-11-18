@@ -90,6 +90,7 @@ Only these actions exist: `badge`, `class`, `attribute`, `hide`, `show`, `text`.
 | bridge in-flight tasks | 2 | hard concurrency cap, not configurable |
 | `max_items` / `maxItems` | 200 | bounds DOM work per task |
 | `ollama.idle_unload_seconds` | 300 s | frees unified memory |
+| `ollama.warmup` | off | opt-in preload; bounded by `warmup_timeout_seconds` (120 s) and still subject to the idle reaper |
 
 ### 7. Native messaging surface
 

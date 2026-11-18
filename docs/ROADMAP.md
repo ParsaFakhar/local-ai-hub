@@ -3,7 +3,8 @@
 Everything below is **still open**. Features that shipped in 0.2.0 (userscript
 bridge, MV3 builds, dry run, result review, selector picker, context menus, the
 six additional plugins, result cache, task history + audit log, cancellation,
-streaming, capability enforcement, SSE and the Unix-socket API transport) are
+streaming, capability enforcement, task priorities, model warm-up, SSE and the
+Unix-socket API transport) are
 documented in [CHANGELOG.md](../CHANGELOG.md) and the relevant `docs/` file, not
 here.
 
@@ -14,7 +15,8 @@ here.
    on a live thread, tune `batch_size`, labels and instructions.
 2. **Real model validation** — pick an installed tag (`qwen3:4b`, `qwen2.5:4b`,
    a vision model for tagging), measure latency on M1 Pro, tune `num_ctx`,
-   `keep_alive` and `idle_unload_seconds`.
+   `keep_alive` and `idle_unload_seconds`, and decide whether `ollama.warmup`
+   pays off on your machine.
 3. **Persistent signed installation** — unlisted AMO self-signing so the
    extension survives restarts (see [INSTALL_MACOS.md](INSTALL_MACOS.md)).
 4. **MV3 in a real browser** — both MV3 variants build and pass static
@@ -28,9 +30,6 @@ here.
 * **Filesystem / network capability vocabulary.** Only the `llm.*` capabilities
   are enforced so far; `fs.*` / `net.*` declarations would need real mediation
   in the runtime, not just a manifest check.
-* **Task priorities.** Cancellation exists; a priority queue does not.
-* **Model warm-up policy** — preload a model before the first task instead of
-  paying the cold-load latency inline.
 * **Additional backends** behind the same interface (llama.cpp server, MLX,
   LM Studio) — plugins would not change at all.
 * **Signed plugin manifests** so a plugin's provenance can be checked at

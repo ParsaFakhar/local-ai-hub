@@ -20,7 +20,7 @@ from .logging_util import get_logger, setup_logging
 from .models import ModelError, ModelManager
 from .plugins import PluginManager
 from .runtime import PluginRuntimeError, run_plugin
-from .tasks import TaskRegistry, input_hash
+from .tasks import PRIORITY_DEFAULT, TaskQueue, TaskRegistry, input_hash, normalize_priority
 
 log = get_logger("engine")
 
@@ -87,11 +87,22 @@ class Engine:
         self.domains = DomainRegistry(self.config)
         self.models = ModelManager(self.config, on_event=self._runtime_event)
         self.tasks = TaskRegistry(self.config)
+        #: Intake queue for waiting tasks, ordered by priority.  The native host
+        #: feeds its workers from here; control types read/cancel through it.
+        self.queue = TaskQueue(
+            int(self.config.get("tasks.queue_size", 64) or 64),
+            default_priority=self.config.get("tasks.default_priority", PRIORITY_DEFAULT),
+        )
         self.cache = ResultCache(self.config)
         self.started_at = time.time()
         self.task_count = 0
         self.error_count = 0
         self._counters_lock = threading.Lock()
+        if bool(self.config.get("ollama.warmup", False)) and bool(
+            self.config.get("ollama.warmup_on_start", True)
+        ):
+            # Opt-in: start loading the weights while the browser wires up.
+            self.models.warmup()
 
     # ------------------------------------------------------------------
     def _runtime_event(self, name: str, data: dict) -> None:
@@ -166,7 +177,7 @@ class Engine:
             "uptime_seconds": int(time.time() - self.started_at),
             "plugins": {"count": len(self.plugins.list()), "errors": self.plugins.errors},
             "domains": {"count": len(self.domains.list_domains())},
-            "tasks": self.tasks.counters(),
+            "tasks": {**self.tasks.counters(), "queued": self.queue.qsize()},
             "cache": self.cache.stats(),
             "models": self.models.status(),
             "security": {
@@ -192,6 +203,7 @@ class Engine:
         limit = int(limit) if isinstance(limit, (int, float)) and limit > 0 else None
         return {
             "running": self.tasks.running(),
+            "queued": self.queue.snapshot(),
             "history": self.tasks.history(limit),
             "counters": self.tasks.counters(),
         }
@@ -216,7 +228,9 @@ class Engine:
         target = request.get("task_id") or request.get("target")
         if target in (None, "", "*"):
             cancelled = self.tasks.cancel_all()
-            log.info("cancelled %d running task(s)", len(cancelled))
+            for message in self.queue.clear():
+                cancelled.append(self._cancel_queued(message))
+            log.info("cancelled %d running/queued task(s)", len(cancelled))
             return {"cancelled": cancelled, "all": True}
         if not isinstance(target, str):
             return protocol.make_error(
@@ -224,10 +238,32 @@ class Engine:
             )
         found = self.tasks.cancel(target)
         if not found:
+            message = self.queue.remove(target)
+            if message is not None:
+                self._cancel_queued(message)
+                self._task_event(target, "task.cancelled", {"id": target, "queued": True})
+                return {"cancelled": [target], "queued": True}
             return {"cancelled": [], "unknown_task": target}
         log.info("cancellation requested for task %s", target)
         self._task_event(target, "task.cancelling", {"id": target})
         return {"cancelled": [target]}
+
+    def _cancel_queued(self, message: Any) -> str:
+        """Book-keep a task dropped from the intake queue and return its id."""
+        context = message.get("context") or {} if isinstance(message, dict) else {}
+        request_id = message.get("id") if isinstance(message, dict) else None
+        request_id = request_id if isinstance(request_id, str) and request_id else "-"
+        self.tasks.cancel_before_start(
+            request_id,
+            plugin=(message.get("plugin") or "?") if isinstance(message, dict) else "?",
+            domain=normalize_domain(context.get("domain")),
+            interface=context.get("interface", "unknown"),
+            priority=self.queue.default_priority
+            if not isinstance(message, dict)
+            else normalize_priority(message.get("priority"), self.queue.default_priority),
+        )
+        log.info("task %s cancelled before it started", request_id)
+        return request_id
 
     def _handle_cache_clear(self, request: dict) -> dict:
         return {"cleared": self.cache.clear(), "cache": self.cache.stats()}
@@ -255,6 +291,21 @@ class Engine:
 
     def _handle_models_unload(self, request: dict) -> dict:
         return {"unloaded": self.models.unload_all()}
+
+    def _handle_models_warmup(self, request: dict) -> dict:
+        models = request.get("models")
+        if models is not None and not (
+            isinstance(models, list) and all(isinstance(name, str) and name for name in models)
+        ):
+            return protocol.make_error(
+                request["id"],
+                protocol.ErrorCode.BAD_REQUEST,
+                "'models' must be a list of non-empty model names",
+            )
+        # Always asynchronous: a cold load can take tens of seconds and must
+        # never block the caller (the host answers control types on its reader
+        # thread).  Poll `status` / `models.list` for the warm-up state.
+        return {"warmup": self.models.warmup(models)}
 
     def _handle_config_get(self, request: dict) -> dict:
         data = self.config.as_dict()
@@ -325,6 +376,7 @@ class Engine:
         request_id = request["id"]
         plugin_id = request["plugin"]
         started = time.monotonic()
+        priority = normalize_priority(request.get("priority"), self.queue.default_priority)
 
         plugin = self.plugins.get(plugin_id)
         if plugin is None:
@@ -488,6 +540,7 @@ class Engine:
             output, cached_meta = cached
             cached_meta = dict(cached_meta)
             cached_meta["duration_ms"] = int((time.monotonic() - started) * 1000)
+            cached_meta["priority"] = priority
             self._bump(ok=True)
             self.tasks.register(
                 request_id,
@@ -495,6 +548,7 @@ class Engine:
                 domain=payload["context"]["domain"],
                 interface=payload["context"]["interface"],
                 digest=digest,
+                priority=priority,
             )
             self.tasks.finish(
                 request_id,
@@ -513,6 +567,7 @@ class Engine:
             domain=payload["context"]["domain"],
             interface=payload["context"]["interface"],
             digest=digest,
+            priority=priority,
         )
 
         self._task_event(request_id, "task.started", {"plugin": plugin.id})
@@ -559,6 +614,7 @@ class Engine:
             "domain": payload["context"]["domain"],
             "output_schema_errors": output_errors,
             "input_hash": digest,
+            "priority": priority,
         }
         self.tasks.finish(
             request_id, ok=True, duration_ms=duration_ms, models=used_models
@@ -571,4 +627,5 @@ class Engine:
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
         self.tasks.cancel_all()
+        self.queue.clear()
         self.models.shutdown()

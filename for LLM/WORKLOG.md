@@ -1,5 +1,77 @@
 # WORKLOG — local-ai-hub
 
+## 2026-11-19 (cont.) — model warm-up policy
+
+- Phase 0: all four ledger fingerprints still matched; nothing rerun before the
+  code changed.
+- **Feature: opt-in model warm-up** (next pure-code ROADMAP item).
+  `hub/models/ollama.py`: `load()` (empty prompt + `keep_alive`, no generation).
+  `hub/models/manager.py`: `warmup_targets`, `warmup`, `warmup_status`,
+  `_warmup_run` — async daemon thread, skips models already loaded, per-model
+  failure isolation, states idle/running/ready/partial/failed/cancelled, events
+  `model.warming|warmed|warmup_failed|warmup_done`, `status().warmup`.
+  `hub/engine.py`: `models.warmup` control type (always async, validates
+  `models`) + start-up warm-up when `ollama.warmup` and `ollama.warmup_on_start`.
+  Config keys `ollama.warmup|warmup_on_start|warmup_vision|warmup_models|
+  warmup_timeout_seconds` (defaults + `config/hub.json`). `POST /v1/models/warmup`
+  (+ OpenAPI), `LocalClient.warmup`, CLI `laihub warmup [--models a,b]`.
+- Tests: `tests/test_warmup.py` (33 tests incl. a fake Ollama client for
+  failure/partial/in-flight/shutdown paths and an `OllamaClient.load` body
+  check). Suite **326 OK** at that point, smoke **18/18** (new "model warm-up accepted" check).
+  Extension rows untouched. Fixed one test-harness bug: `on_event` takes
+  `(name, data)`, so `list.append` silently swallowed every event.
+- **Bug fixed (found by verifying the new docs against a running server):**
+  `hub/api.py` dropped the body of every argument-less POST control route, so
+  `POST /v1/models/warmup` ignored `{"models": [...]}` (and never validated it).
+  It now forwards `models`; 4 real-HTTP tests added (`HTTPWarmupTests`). Suite
+  **330 OK**, smoke **18/18**.
+- Warm-up docs: PROTOCOL.md (control row, 4 events, new "Model warm-up" section,
+  HTTP POST row, `models.list` report), ARCHITECTURE.md (both model rows),
+  SECURITY.md limit table, CHANGELOG 0.2.0 bullet + counts, ROADMAP (open item
+  removed, shipped list + real-model item updated), README (326→330 counts,
+  model-lifecycle bullet, `laihub warmup` example, status-table row).
+- Verified by running: `laihub --mock warmup --models a,b` → models `['a','b']`;
+  a real local API server honours `{"models":["http-model"]}`, reports it in
+  `GET /v1/status`, and rejects `"not-a-list"` with 400 `bad_request`.
+- Packaged LAST from the final tree; zip/xpi copied to `handoff_out/` outside the
+  repo; `dist/` + caches deleted. Ledger fingerprints unchanged by packaging.
+
+## 2026-11-19 — task priorities (engine + host + CLI), handoff re-verified
+
+- Phase 0 case A: all four ledger fingerprints matched at base `b1178b6`; no
+  check was rerun before code changed.
+- Hygiene: deleted the tracked `.DS_Store` again (it is committed upstream, so a
+  fresh clone restores it) and added `.pytest_cache/` to `.gitignore` — the
+  2026-11-18 PLAN claimed both, but neither had landed in the remote.
+- **Feature: task priorities** (the top pure-code ROADMAP item).
+  `hub/tasks.py`: `normalize_priority` (0-9, higher first, low/normal/high,
+  clamped, garbage → default), `TaskQueue` (heap + Condition, FIFO per level,
+  bounded/blocking `put`, `get(timeout)`, `task_done`/`join`, `snapshot`,
+  `remove`, `clear`), `TaskRegistry.cancel_before_start`, `priority` recorded in
+  running/get/history/audit. `hub/engine.py`: owns `engine.queue`, normalises
+  `request.priority`, adds `meta.priority` (also on cache hits),
+  `tasks.list.queued`, `status.tasks.queued`, queue-aware `task.cancel` (single
+  + `*`), `shutdown()` clears the queue. Native host workers now consume
+  `engine.queue` instead of a plain `queue.Queue`. New config keys
+  `tasks.queue_size` (64) and `tasks.default_priority` (5) in `hub/config.py`
+  and `config/hub.json`. CLI: `laihub task --priority`.
+- Tests: `tests/test_priority.py` (32 tests: normalisation, ordering, FIFO,
+  bounds/back-pressure, removal, snapshot, registry, engine control types,
+  host worker loop). Suite **293 tests OK**; smoke test **17/17** (2 new checks:
+  priority in meta, `queued` in `tasks.list`). Extension rows untouched.
+- Docs for priorities: PROTOCOL.md (request field, `meta.priority`,
+  `task.cancelled`, `tasks.list`/`task.cancel`/`status` outputs, new "Task
+  priorities" section incl. the native-host-only scope), ARCHITECTURE.md (host
+  workers + `tasks.py` row + cancellation row), CHANGELOG 0.2.0 bullet,
+  ROADMAP (open item removed, shipped list updated), README (293/17 counts,
+  feature bullet, status-table row, `--priority` CLI example).
+- Verified by running it: `laihub --mock task hello.python --priority high` →
+  `meta.priority = 9`; `laihub tasks` output keys now include `queued`.
+- Packaged LAST from the final tree (`python3 scripts/package.py`, no flags):
+  133-file project zip + 19-file xpi copied to `handoff_out/` outside the repo;
+  `dist/` and `__pycache__/` deleted afterwards. Ledger fingerprints unchanged
+  by packaging; `git status` shows only the intended edits + `.DS_Store` deletion.
+
 Newest session at the top. One short entry per session. Never edit old entries.
 
 ## 2026-11-18 — handoff system rebuilt, ledger baseline measured (base `29d4d13`)

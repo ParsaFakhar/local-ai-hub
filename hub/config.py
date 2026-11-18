@@ -47,6 +47,13 @@ DEFAULTS: dict[str, Any] = {
         "request_timeout_seconds": 240,
         "keep_alive": "5m",
         "idle_unload_seconds": 300,
+        # Warm-up policy: preload the weights before the first task instead of
+        # paying the cold-load latency inside it.  Off by default.
+        "warmup": False,
+        "warmup_on_start": True,
+        "warmup_vision": False,
+        "warmup_models": [],
+        "warmup_timeout_seconds": 120,
         "default_model": "qwen3.5:4b",
         "vision_model": "qwen3.5:4b",
         "model_fallbacks": ["qwen3:4b", "qwen2.5:4b", "llama3.2:3b"],
@@ -77,6 +84,10 @@ DEFAULTS: dict[str, Any] = {
         "history_size": 100,
         "audit_log": True,
         "audit_file": "tasks.jsonl",
+        # Intake queue of the native host: waiting tasks, highest priority
+        # first (0-9, names low/normal/high), FIFO within one level.
+        "queue_size": 64,
+        "default_priority": 5,
     },
     "cache": {
         "enabled": False,

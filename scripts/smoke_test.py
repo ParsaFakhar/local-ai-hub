@@ -206,6 +206,29 @@ def main() -> int:
         status = session.request({"type": "status"})
         check("status report", status.get("ok") and "models" in status.get("output", {}), status.get("output", {}).get("models", {}).get("backend", ""))
 
+        prioritised = session.request(
+            {"type": "task", "plugin": "hello.python", "input": {"name": "Priority"}, "priority": "high"}
+        )
+        check(
+            "task priority honoured",
+            prioritised.get("ok") and prioritised.get("meta", {}).get("priority") == 9,
+            str(prioritised.get("meta", {}).get("priority")),
+        )
+
+        listed = session.request({"type": "tasks.list"})
+        check(
+            "tasks.list reports the waiting queue",
+            listed.get("ok") and "queued" in listed.get("output", {}),
+            f"{len(listed.get('output', {}).get('history', []))} history entries",
+        )
+
+        warmed = session.request({"type": "models.warmup", "models": ["smoke-model"]})
+        check(
+            "model warm-up accepted",
+            warmed.get("ok") and warmed.get("output", {}).get("warmup", {}).get("state") in ("running", "ready"),
+            str(warmed.get("output", {}).get("warmup", {}).get("state")),
+        )
+
         check("progress events received", any(event.get("event") == "progress" for event in session.events), f"{len(session.events)} events")
     finally:
         stderr = session.close()

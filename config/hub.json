@@ -28,6 +28,11 @@
     "request_timeout_seconds": 240,
     "keep_alive": "5m",
     "idle_unload_seconds": 300,
+    "warmup": false,
+    "warmup_on_start": true,
+    "warmup_vision": false,
+    "warmup_models": [],
+    "warmup_timeout_seconds": 120,
     "default_model": "qwen3.5:4b",
     "vision_model": "qwen3.5:4b",
     "model_fallbacks": [
@@ -49,7 +54,9 @@
   "tasks": {
     "history_size": 100,
     "audit_log": true,
-    "audit_file": "tasks.jsonl"
+    "audit_file": "tasks.jsonl",
+    "queue_size": 64,
+    "default_priority": 5
   },
   "cache": {
     "enabled": false,

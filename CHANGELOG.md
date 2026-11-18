@@ -12,6 +12,19 @@ Engine
 - **Task registry**: running tasks, bounded history (`tasks.history_size`) and an
   append-only JSONL **audit log** of input *hashes*, models and durations
   (`tasks.audit_log`, `tasks.audit_file`). Cancellation of one task or all.
+- **Task priorities**: an optional `priority` (`0`-`9`, higher first, or
+  `low`/`normal`/`high`) orders the native host's intake queue, FIFO within a
+  level. `tasks.list` reports the waiting queue, `status` its depth, and
+  `task.cancel` can drop a task before it starts (recorded as cancelled in the
+  history and audit log). New keys `tasks.queue_size` and
+  `tasks.default_priority`; CLI flag `laihub task --priority`.
+- **Model warm-up** (opt-in, `ollama.warmup`): preload the default model — and
+  optionally the vision model plus `ollama.warmup_models` — before the first
+  task, on a background thread, using an empty-prompt load. New control type
+  `models.warmup`, `POST /v1/models/warmup`, `laihub warmup [--models …]`,
+  `model.warming` / `model.warmed` / `model.warmup_failed` / `model.warmup_done`
+  events and a `warmup` report in `status` / `models.list`. Failures are
+  per-model and never break a task; the idle reaper still unloads warm models.
 - **Result cache** with TTL and an entry cap (`cache.enabled`,
   `cache.ttl_seconds`, `cache.max_entries`), off by default, plus `cache.clear`.
 - **Streaming inference** end to end: Ollama streaming and deterministic mock
@@ -81,9 +94,10 @@ Config, docs, tests
   sections the engine reads; every version string unified at 0.2.0.
 - New docs: [TAMPERMONKEY.md](docs/TAMPERMONKEY.md) and [MV3.md](docs/MV3.md).
 - Example inputs for every plugin and a ready-to-edit Tampermonkey userscript.
-- **261 Python unit tests, 28 extension logic checks, 15 end-to-end smoke
+- **330 Python unit tests, 28 extension logic checks, 18 end-to-end smoke
   checks**, including new suites for the API, cache, CLI, bridge, capabilities,
-  streaming, task registry and the six new plugins; pure-Python PNG/JPEG fixtures.
+  streaming, task registry, priorities, warm-up and the six new plugins;
+  pure-Python PNG/JPEG fixtures.
 - Repository hygiene: `.gitignore`, no tracked `.DS_Store` or scratch artifacts.
 
 Known gaps: real imageboard selectors, a signed persistent Firefox installation,

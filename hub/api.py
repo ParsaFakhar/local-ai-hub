@@ -35,6 +35,7 @@ Routes
 ``POST /v1/task``                       run a task
 ``POST /v1/task/cancel``                cancel a running task
 ``POST /v1/models/unload``              free model memory
+``POST /v1/models/warmup``              preload models (async)
 ``POST /v1/cache/clear``                drop cached results
 ``POST /v1/shutdown``                   clean shutdown
 ======================================  =====================================
@@ -75,6 +76,7 @@ GET_ROUTES = {
 POST_ROUTES = {
     "/v1/task/cancel": "task.cancel",
     "/v1/models/unload": "models.unload",
+    "/v1/models/warmup": "models.warmup",
     "/v1/cache/clear": "cache.clear",
     "/v1/shutdown": "shutdown",
 }
@@ -470,6 +472,11 @@ def _make_handler(config, engine, bus, token, doc_port: int = 8765):
                         "'task_id' is required (use '*' to cancel every running task)",
                     )
                 return self._control(kind, {"task_id": target})
+            if kind == "models.warmup":
+                # This control type takes an optional argument; forward it
+                # instead of dropping the body like the argument-less routes.
+                models = message.get("models")
+                return self._control(kind, {"models": models} if models is not None else None)
             self._control(kind)
             if kind == "shutdown":
                 threading.Thread(target=self.server.shutdown, daemon=True).start()

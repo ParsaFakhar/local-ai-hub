@@ -42,6 +42,7 @@ CONTROL_COMMANDS = {
     "domain": "domains.get",
     "models": "models.list",
     "unload": "models.unload",
+    "warmup": "models.warmup",
     "config": "config.get",
     "tasks": "tasks.list",
     "cache": "cache.clear",
@@ -99,6 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     cancel = sub.add_parser("cancel", parents=[common], help="cancel a running task ('*' for all)")
     cancel.add_argument("task_id", nargs="?", default="*")
 
+    warmup = sub.add_parser("warmup", parents=[common], help="preload models before the first task")
+    warmup.add_argument("--models", help="comma-separated model names (default: the configured warm-up set)")
+
     cache = sub.add_parser("cache", parents=[common], help="result-cache statistics")
     cache.add_argument("--clear", action="store_true", help="drop every cached result")
 
@@ -113,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument("--id", help="caller-chosen task id")
     task.add_argument("--stream", action="store_true", help="stream model tokens to stderr")
     task.add_argument("--timeout", type=float, help="plugin timeout in seconds")
+    task.add_argument("--priority", help="0-9 or low/normal/high; orders the native-host queue")
 
     serve = sub.add_parser("serve", parents=[common], help="run the local HTTP API (opt-in)")
     serve.add_argument("--host")
@@ -182,6 +187,9 @@ def _run_remote(client: LocalClient, args) -> dict:
         return protocol.make_result(protocol.new_id("cli"), output)
     if args.command == "unload":
         return protocol.make_result(protocol.new_id("cli"), client.unload())
+    if args.command == "warmup":
+        names = [name.strip() for name in (args.models or "").split(",") if name.strip()]
+        return protocol.make_result(protocol.new_id("cli"), {"warmup": client.warmup(names)})
 
     route = {
         "ping": "/v1/ping",
@@ -213,6 +221,8 @@ def _local_request(args) -> dict:
         }
         if args.timeout:
             request["timeout_seconds"] = args.timeout
+        if args.priority is not None:
+            request["priority"] = args.priority
         return request
     if args.command == "cancel":
         return {
@@ -223,6 +233,8 @@ def _local_request(args) -> dict:
     request = {"type": CONTROL_COMMANDS[args.command], "id": protocol.new_id("cli")}
     if args.command == "domain":
         request["domain"] = args.name
+    if args.command == "warmup" and args.models:
+        request["models"] = [name.strip() for name in args.models.split(",") if name.strip()]
     if args.command == "tasks":
         if args.id:
             request = {"type": "tasks.get", "id": protocol.new_id("cli"), "task_id": args.id}

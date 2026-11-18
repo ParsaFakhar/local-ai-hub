@@ -27,6 +27,9 @@ Python, HTTP.
 ```
 
 * `id` — caller-generated, echoed back; used to correlate events too.
+* `priority` — optional scheduling hint, `0`-`9` (**higher runs first**) or the
+  names `low` (0), `normal` (5), `high` (9). Default `tasks.default_priority`
+  (5). Unusable values fall back to the default; they never fail a task.
 * `options` — plugin config overrides (trusted UI/caller only).
 * `context.domain_config` — extension-side override, merged over file config.
   Only accepted from the extension, never from a webpage.
@@ -52,6 +55,7 @@ Python, HTTP.
     "mock_model": false,
     "duration_ms": 812,
     "domain": "example-board.com",
+    "priority": 5,
     "output_schema_errors": []
   }
 }
@@ -59,6 +63,7 @@ Python, HTTP.
 
 When the result cache is enabled and hits, `meta.cache` carries
 `{hit: true, age_ms, key}` (the first 16 hex chars of the cache key).
+`meta.priority` is the effective priority and is present on cache hits too.
 
 ### Error
 
@@ -101,29 +106,33 @@ When the result cache is enabled and hits, `meta.cache` carries
 ```
 
 Events: `host.ready`, `task.started`, `task.finished`, `task.failed`,
-`task.cancelling`, `progress`, `plugin.log`, `model.server_starting`,
-`model.server_ready`, `model.generating`, `model.token`, `model.unloaded`.
+`task.cancelling`, `task.cancelled`, `progress`, `plugin.log`, `model.server_starting`,
+`model.server_ready`, `model.generating`, `model.token`, `model.unloaded`,
+`model.warming`, `model.warmed`, `model.warmup_failed`, `model.warmup_done`.
 
 `model.token` carries coalesced streaming fragments as
 `{plugin, text}` and is emitted only while streaming is active (`ollama.stream`,
 a per-call `stream` flag, or a plugin using `on_token`). `task.cancelling` carries
-`{id}` and precedes the cancelled task's result.
+`{id}` and precedes the cancelled task's result. `task.cancelled` carries
+`{id, queued: true}` and is emitted instead when a task is dropped from the
+intake queue before it ever started (no result frame follows it).
 
 ## Control messages
 
 | Type | Output |
 | ---- | ------ |
 | `ping` | `{pong, app, version, protocol, time_ms, echo}` |
-| `status` | uptime, plugin/domain counts, task counters, full model status, config sources |
+| `status` | uptime, plugin/domain counts, task counters + `queued` depth, full model status, config sources |
 | `plugins.list` | `{plugins: [manifest summaries], errors: []}` |
 | `domains.list` | `{domains: [{domain, features, label}]}` |
 | `domains.get` | effective config for `domain` (+ `overrides`), plus `available_plugins` and the resolved `bridge_policy` |
-| `models.list` | backend, running, loaded/installed models, default/vision model |
+| `models.list` | backend, running, loaded/installed models, default/vision model, `warmup` report |
 | `models.unload` | `{unloaded: [names]}` — frees memory immediately |
+| `models.warmup` | `{warmup: report}` — starts an asynchronous preload of `models` (list of names, optional; default is the configured warm-up set) and returns immediately |
 | `config.get` | effective hub config + sources |
-| `tasks.list` | running tasks, recent history (`limit`) and counters |
+| `tasks.list` | `{running, queued, history, counters}` — `queued` is the intake queue in run order (`limit` trims `history` only) |
 | `tasks.get` | `{task: record}` for `task_id`, running or recent; `unknown_task` otherwise |
-| `task.cancel` | `{cancelled: [ids]}`; `task_id: "*"` (or omitted) cancels everything and adds `all: true`; an unknown id returns `{cancelled: [], unknown_task: id}` |
+| `task.cancel` | `{cancelled: [ids]}`; `task_id: "*"` (or omitted) cancels everything and adds `all: true`; an unknown id returns `{cancelled: [], unknown_task: id}`. A task still waiting in the queue is dropped and returns `{cancelled: [id], queued: true}`; `*` covers running **and** queued tasks |
 | `cache.clear` | `{cleared: n, cache: stats}` |
 | `shutdown` | cleanup (unload models, optionally stop Ollama) then exit |
 
@@ -131,6 +140,53 @@ a per-call `stream` flag, or a plugin using `on_token`). `task.cancelling` carri
 **inline control types**: the native host answers them immediately instead of
 queueing them behind a running task, so a long classification never blocks a
 cancel or a status poll.
+
+### Task priorities
+
+Waiting tasks are ordered by the engine's intake queue (`hub/tasks.py:TaskQueue`,
+owned by `Engine.queue`, consumed by the native host's two workers):
+
+* highest `priority` first; ties keep arrival order (FIFO);
+* `tasks.queue_size` (default 64) bounds the queue — the host stops reading
+  frames while it is full, exactly as before priorities existed;
+* `tasks.list` shows the waiting tasks as
+  `{id, plugin, priority, queued_ms, position}`, next-to-run first;
+* `task.cancel` on a waiting id removes it, writes a cancelled record to the
+  history/audit log (`error: "cancelled before start"`) and emits
+  `task.cancelled`; nothing is ever executed for it;
+* a running task is never preempted — priority decides *start* order only.
+
+Scope: the queue belongs to the native-messaging host. The CLI and your own
+Python program call `Engine.handle` directly, and the HTTP API serves each
+request in its own thread, so those callers run immediately; `priority` is still
+echoed in `meta` and recorded in the task history.
+
+### Model warm-up
+
+Cold-loading a 4B model costs seconds; warm-up moves that cost out of the first
+task. It is **off by default** (`ollama.warmup`).
+
+* Policy keys: `ollama.warmup` (master switch), `ollama.warmup_on_start`
+  (default `true` — the engine starts warming as soon as it is constructed),
+  `ollama.warmup_vision` (also warm `ollama.vision_model`),
+  `ollama.warmup_models` (extra tags), `ollama.warmup_timeout_seconds` (120).
+* `models.warmup` triggers it on demand and **always returns immediately**; the
+  load runs on a daemon thread. A second call while one is in flight returns the
+  running report unchanged.
+* The report (also in `status.models.warmup` and `models.list`) is
+  `{state, models, loaded, skipped, failed, duration_ms, error, mock}` with
+  `state` ∈ `idle`, `running`, `ready`, `partial` (some tags failed), `failed`,
+  `cancelled` (shutdown mid-run).
+* Events: `model.warming` `{model}`, `model.warmed` `{model, duration_ms, mock}`,
+  `model.warmup_failed` `{model, error}`, `model.warmup_done`
+  `{state, loaded, skipped, failed, duration_ms}`.
+* Mechanism: `POST /api/generate` with an **empty prompt** and the configured
+  `keep_alive` — Ollama loads the weights without generating. A tag that is not
+  installed fails with the usual `ollama pull …` hint; other tags still warm.
+  Models the hub already loaded are reported as `skipped`.
+* Warm-up does not pin anything: the idle reaper still unloads after
+  `ollama.idle_unload_seconds`. With `ollama.mock` the report is deterministic
+  and nothing is actually loaded.
 
 ## Transport: native messaging
 
@@ -212,6 +268,7 @@ curl -s http://127.0.0.1:8765/v1/task -H "Authorization: Bearer $TOKEN" \
 | POST | `/v1/task` | run a task (same envelope as above) |
 | POST | `/v1/task/cancel` | cancel one task or all |
 | POST | `/v1/models/unload` | free model memory |
+| POST | `/v1/models/warmup` | preload models (`{"models": [...]}` optional), async |
 | POST | `/v1/cache/clear` | drop cached results |
 | POST | `/v1/shutdown` | clean shutdown |
 
